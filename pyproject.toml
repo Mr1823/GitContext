@@ -1,0 +1,44 @@
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitcontext"
+version = "0.1.0"
+description = "End-to-End Codebase Intelligence and Developer Copilot"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "typer",
+    "rich",
+    "gitpython",
+    "tree-sitter",
+    "tree-sitter-python",
+    "qdrant-client",
+    "sentence-transformers",
+    "rank-bm25",
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+gitcontext = "gitcontext.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
