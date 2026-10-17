@@ -13,7 +13,14 @@ from gitcontext.evaluation import (
     extract_citations,
     token_f1,
 )
-from gitcontext.indexer import index_repository, repository_is_stale
+from gitcontext.indexer import (
+    index_remote_repository,
+    index_repository,
+    prepare_remote_repository,
+    remote_repository_is_stale,
+    repository_is_stale,
+)
+from gitcontext.ingest.remote import is_github_url
 from gitcontext.ingest.repository import is_git_repository, scan_repository
 from gitcontext.retrieval import retrieve_with_metrics
 from gitcontext.vector_store import VectorStore
@@ -25,17 +32,10 @@ app = typer.Typer(
 )
 console = Console()
 REPOSITORY_PATH_ARGUMENT = typer.Argument(
-    ...,
-    exists=True,
-    file_okay=False,
-    dir_okay=True,
-    readable=True,
-    resolve_path=True,
-    help="Path to the repository to scan.",
+    ..., help="Local repository folder or GitHub repository URL."
 )
 ASK_PATH_OPTION = typer.Option(
-    Path.cwd(), "--path", "-p", exists=True, file_okay=False,
-    dir_okay=True, resolve_path=True, help="Repository to search.",
+    str(Path.cwd()), "--path", "-p", help="Local repository folder or GitHub repository URL."
 )
 TOP_K_OPTION = typer.Option(6, "--top-k", min=1, max=20, help="Maximum evidence chunks.")
 ASK_QUESTION_ARGUMENT = typer.Argument(..., help="Question to ask about the repository.")
@@ -62,16 +62,32 @@ def hello() -> None:
 
 @app.command()
 def scan(
-    path: Path = REPOSITORY_PATH_ARGUMENT,
+    path: str = REPOSITORY_PATH_ARGUMENT,
 ) -> None:
-    """Discover supported source files in a repository."""
-    is_git = is_git_repository(path)
-    source_files = scan_repository(path)
+    """Discover supported files in a local repository or online GitHub repository."""
+    if is_github_url(path):
+        try:
+            settings = Settings.for_repository(Path.cwd())
+            remote, source_files = prepare_remote_repository(path, settings.github_token)
+            repository_path = remote.url
+            is_git = True
+            root = remote.cache_path
+        except (OSError, RuntimeError, ValueError) as error:
+            console.print(f"[bold red]Scan failed:[/bold red] {error}")
+            raise typer.Exit(code=1) from error
+    else:
+        root = Path(path).expanduser().resolve()
+        if not root.is_dir():
+            console.print(f"[bold red]Repository folder does not exist:[/bold red] {root}")
+            raise typer.Exit(code=1)
+        repository_path = str(root)
+        is_git = is_git_repository(root)
+        source_files = scan_repository(root)
 
     table = Table(title="GitContext Repository Scan")
     table.add_column("Property", style="cyan")
     table.add_column("Result", style="green")
-    table.add_row("Repository path", str(path))
+    table.add_row("Repository", repository_path)
     table.add_row("Git repository", "Yes" if is_git else "No")
     table.add_row("Source files found", str(len(source_files)))
     console.print(table)
@@ -79,18 +95,24 @@ def scan(
     if source_files:
         console.print("\n[bold]Discovered files[/bold]")
         for file_path in source_files:
-            console.print(f"  {file_path.relative_to(path)}")
+            console.print(f"  {file_path.relative_to(root)}")
     else:
         console.print("[yellow]No supported source files found.[/yellow]")
 
 
 @app.command()
 def index(
-    path: Path = REPOSITORY_PATH_ARGUMENT,
+    path: str = REPOSITORY_PATH_ARGUMENT,
 ) -> None:
-    """Parse source files and build a local searchable index."""
+    """Parse a local folder or online GitHub repository and build its index."""
     try:
-        summary = index_repository(path)
+        if is_github_url(path):
+            summary = index_remote_repository(path)
+        else:
+            root = Path(path).expanduser().resolve()
+            if not root.is_dir():
+                raise NotADirectoryError(f"Repository folder does not exist: {root}")
+            summary = index_repository(root)
     except (OSError, RuntimeError, ValueError) as error:
         console.print(f"[bold red]Indexing failed:[/bold red] {error}")
         raise typer.Exit(code=1) from error
@@ -117,14 +139,28 @@ def index(
 @app.command()
 def ask(
     question: str = ASK_QUESTION_ARGUMENT,
-    path: Path = ASK_PATH_OPTION,
+    path: str = ASK_PATH_OPTION,
     top_k: int = TOP_K_OPTION,
 ) -> None:
-    """Search the local index and answer with repository evidence."""
-    settings = Settings.for_repository(path)
+    """Search a local or online GitHub repository index and answer with evidence."""
     try:
-        if repository_is_stale(path):
-            summary = index_repository(path, refresh_external=False)
+        if is_github_url(path):
+            token = Settings.for_repository(Path.cwd()).github_token
+            stale, remote = remote_repository_is_stale(path, token)
+            if stale:
+                summary = index_remote_repository(path, remote=remote)
+                console.print(
+                    f"[dim]Updated remote index at {remote.head_sha[:8]}: "
+                    f"{summary.changed_files} changed files.[/dim]"
+                )
+            repository = remote.cache_path
+        else:
+            repository = Path(path).expanduser().resolve()
+            if not repository.is_dir():
+                raise NotADirectoryError(f"Repository folder does not exist: {repository}")
+        settings = Settings.for_repository(repository)
+        if not is_github_url(path) and repository_is_stale(repository):
+            summary = index_repository(repository, refresh_external=False)
             console.print(
                 f"[dim]Updated stale index: {summary.changed_files} changed files, "
                 f"{summary.removed_files} removed files.[/dim]"

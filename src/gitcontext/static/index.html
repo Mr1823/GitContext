@@ -22,7 +22,7 @@
         <div class="sidebar-bottom">
           <div class="privacy-card">
             <span class="privacy-icon">◉</span>
-            <div><strong>Runs on your machine</strong><p>Your index stays local.</p></div>
+            <div><strong>Online source, local index</strong><p>GitHub code is cached for search.</p></div>
           </div>
           <div class="side-version"><span class="live-dot"></span> LOCAL INSTANCE <span>v0.1</span></div>
         </div>
@@ -39,7 +39,7 @@
             <div>
               <div class="eyebrow"><span class="eyebrow-line"></span> CODEBASE INTELLIGENCE</div>
               <h1>Understand your codebase.</h1>
-              <p class="subtitle">Search, explore, and ask questions about your repository.</p>
+              <p class="subtitle">Search local folders or GitHub repositories without cloning them yourself.</p>
             </div>
             <div class="hero-orbit" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit-core">G</div><span class="orbit-node node-a"></span><span class="orbit-node node-b"></span><span class="orbit-node node-c"></span></div>
           </section>
@@ -47,13 +47,13 @@
           <section class="repo-card panel">
             <div class="section-heading">
               <div class="heading-icon">⌁</div>
-              <div><h2>Connect a repository</h2><p>Enter the folder path on this machine to get started.</p></div>
+              <div><h2>Connect a repository</h2><p>Enter a local folder path or a GitHub repository URL.</p></div>
             </div>
             <form id="repository-form" class="repo-form">
-              <label class="path-input-wrap" for="repository-path"><span class="path-prefix">⌂</span><input id="repository-path" name="path" type="text" placeholder="/path/to/your/repository" autocomplete="off" spellcheck="false" required /></label>
+              <label class="path-input-wrap" for="repository-path"><span class="path-prefix">⌂</span><input id="repository-path" name="path" type="text" placeholder="https://github.com/owner/repository or /path/to/repo" autocomplete="off" spellcheck="false" required /></label>
               <button class="button button-primary" id="scan-button" type="submit"><span>Scan repository</span><span class="button-arrow">↗</span></button>
             </form>
-            <p class="form-hint">The web browser can’t browse your disk. Paste or type the repository’s full folder path.</p>
+            <p class="form-hint">Paste a GitHub URL to fetch the repository directly. No manual clone is needed; GitContext keeps a managed index cache on this machine.</p>
             <div id="repo-error" class="notice notice-error hidden" role="alert"></div>
           </section>
 

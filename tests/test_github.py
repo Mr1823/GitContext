@@ -43,3 +43,27 @@ def test_github_pr_and_incident_records_are_normalized(tmp_path: Path, monkeypat
     assert len(incidents) == 1
     assert incidents[0].source_type == "incident"
     assert "Rolled back." in incidents[0].content
+
+
+def test_remote_github_commits_include_author_and_source_link(monkeypatch) -> None:
+    monkeypatch.setattr(
+        github,
+        "_get_json",
+        lambda url, headers: [{
+            "sha": "abc123def456",
+            "html_url": "https://github.com/acme/project/commit/abc123def456",
+            "author": {"login": "dev"},
+            "commit": {
+                "message": "Fix authentication flow",
+                "author": {"name": "Developer", "date": "2026-10-01T12:00:00Z"},
+            },
+        }],
+    )
+
+    documents = github.github_commit_documents("acme/project", token=None, limit=5)
+
+    assert len(documents) == 1
+    assert documents[0].source_type == "commit"
+    assert documents[0].author == "dev"
+    assert documents[0].source_url.endswith("/commit/abc123def456")
+    assert "Fix authentication flow" in documents[0].content

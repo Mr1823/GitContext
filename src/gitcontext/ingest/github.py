@@ -36,6 +36,16 @@ def github_documents(
     slug = repository_slug(repository_path)
     if not slug:
         return [], []
+    return github_documents_for_slug(slug, token, pull_limit, incident_limit)
+
+
+def github_documents_for_slug(
+    slug: str,
+    token: str | None,
+    pull_limit: int = 10,
+    incident_limit: int = 10,
+) -> tuple[list[ParsedBlock], list[ParsedBlock]]:
+    """Fetch recent PR and incident context for a known GitHub owner/repository."""
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "GitContext-Codebase-Assistant",
@@ -82,6 +92,53 @@ def github_documents(
         if len(incident_docs) >= incident_limit:
             break
     return pull_docs, incident_docs
+
+
+def github_commit_documents(
+    slug: str,
+    token: str | None,
+    limit: int = 30,
+) -> list[ParsedBlock]:
+    """Fetch a bounded list of recent GitHub commit messages as searchable documents."""
+    if limit <= 0:
+        return []
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "GitContext-Codebase-Assistant",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    commits = _get_json(
+        f"https://api.github.com/repos/{slug}/commits?per_page={min(limit, 100)}", headers
+    )
+    documents = []
+    for item in commits[:limit]:
+        commit = item.get("commit") or {}
+        author_data = commit.get("author") or {}
+        author = (item.get("author") or {}).get("login") or author_data.get("name") or "unknown"
+        authored = author_data.get("date", "")
+        message = commit.get("message", "").strip()
+        sha = item.get("sha", "")
+        content = (
+            f"Commit {sha}\nAuthor: {author}\nDate: {authored}\n"
+            f"Message:\n{message}\nURL: {item.get('html_url', '')}"
+        )
+        if not sha:
+            continue
+        documents.append(ParsedBlock(
+            path=f"history/commit/{sha[:12]}",
+            start_line=1,
+            end_line=max(1, len(content.splitlines())),
+            symbol=message.splitlines()[0][:160] if message else f"Commit {sha[:12]}",
+            content=content,
+            source_type="commit",
+            commit_sha=sha,
+            author=author,
+            last_modified=authored or None,
+            source_url=item.get("html_url"),
+        ))
+    return documents
 
 
 def _get_json(url: str, headers: dict[str, str]) -> list[dict[str, Any]]:

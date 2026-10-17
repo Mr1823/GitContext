@@ -76,7 +76,7 @@ function showRepository(data) {
   sessionStorage.setItem("gitcontext.repository", activeRepository);
   byId("repo-name").textContent = activeRepository.split(/[\\/]/).filter(Boolean).pop() || activeRepository;
   byId("repo-full-path").textContent = activeRepository;
-  byId("git-badge").textContent = data.is_git ? "Git repository" : "Folder";
+  byId("git-badge").textContent = data.remote ? "Online GitHub" : data.is_git ? "Git repository" : "Folder";
   byId("chunk-count").textContent = indexed ? String(data.indexed_chunks) : "—";
   byId("index-state").textContent = indexed ? "Ready" : "Not indexed";
   byId("chat-hint").textContent = indexed ? "Answers use your indexed source files" : "Build the search index to start asking questions";
@@ -196,6 +196,15 @@ function appendMessage(role, text, sources = [], latency = null) {
       const commit = document.createElement("span");
       commit.textContent = ` · ${source.commit_sha.slice(0, 8)}`;
       summary.append(commit);
+    }
+    if (source.source_url) {
+      const sourceLink = document.createElement("a");
+      sourceLink.className = "source-link";
+      sourceLink.href = source.source_url;
+      sourceLink.target = "_blank";
+      sourceLink.rel = "noopener noreferrer";
+      sourceLink.textContent = " · Open source";
+      summary.append(sourceLink);
     }
     const code = document.createElement("pre");
     code.textContent = source.content;

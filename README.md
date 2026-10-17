@@ -35,9 +35,21 @@ gitcontext ask "Where is authentication handled?" --path /path/to/repository
 gitcontext web
 ```
 
-Clone GitHub repositories with Git first, then point GitContext at the local
-clone. GitContext uses the clone's `origin` to discover and ingest GitHub
-discussions during indexing.
+GitHub repositories can be entered directly; you do not need to clone them
+yourself. GitContext fetches the default-branch snapshot into its managed cache
+and keeps the searchable index on this machine. Local folders and clones remain
+supported too.
+
+```bash
+gitcontext scan https://github.com/owner/repository
+gitcontext index https://github.com/owner/repository
+gitcontext ask "Where is authentication handled?" \
+  --path https://github.com/owner/repository
+```
+
+The web UI accepts the same GitHub URL. Private repositories require a
+`GITHUB_TOKEN` with repository read access. The `GITCONTEXT_REMOTE_CACHE`
+environment variable can change where fetched repository snapshots are cached.
 
 `gitcontext web` starts the FastAPI service and opens the browser UI at
 `http://127.0.0.1:8765`. API documentation is available at `/docs`. Paste a
@@ -85,17 +97,20 @@ say when the retrieved context does not answer the question.
 
 ## Git history and GitHub context
 
-Indexing includes recent Git commits, file-level last-change commit, author, and
-timestamp. On GitHub remotes, GitContext also fetches recent pull requests,
-conversation comments, review comments, and issues labeled `incident`,
-`postmortem`, `outage`, or `incident-report`. Public repositories can be read
-without authentication; set `GITHUB_TOKEN` for private repositories and higher
-API limits. Set `GITCONTEXT_INGEST_GITHUB=false` to disable GitHub requests and
-`GITCONTEXT_HISTORY_LIMIT=0` to skip local commit history.
+Indexing a local clone includes recent Git commits, file-level last-change
+commit, author, and timestamp. For direct GitHub URLs, GitContext indexes recent
+commit messages plus pull requests, conversation comments, review comments,
+and issues labeled `incident`, `postmortem`, `outage`, or `incident-report`.
+Public repositories can be read without authentication; set `GITHUB_TOKEN` for
+private repositories and higher API limits. Set `GITCONTEXT_INGEST_GITHUB=false`
+to skip GitHub history and discussions, and `GITCONTEXT_HISTORY_LIMIT=0` to skip
+commit history.
 
-The GitHub sync is bounded to recent pull requests and incidents to limit API
-traffic. Rate-limit or access failures appear as warnings and do not prevent
-local source indexing. Run `gitcontext index` to refresh discussions and history.
+The GitHub sync is bounded to recent commits, pull requests, and incidents to
+limit API traffic. Direct GitHub indexes check the latest default-branch commit
+before answering and refresh the managed snapshot when it changes. Rate-limit or
+access failures appear as warnings and do not prevent source indexing. Run
+`gitcontext index <github-url>` to refresh the repository and discussions.
 
 ## Freshness and metadata
 

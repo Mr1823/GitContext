@@ -10,7 +10,14 @@ from pydantic import BaseModel, Field
 
 from gitcontext.answer import answer_question
 from gitcontext.config import Settings
-from gitcontext.indexer import index_repository, repository_is_stale
+from gitcontext.indexer import (
+    index_remote_repository,
+    index_repository,
+    prepare_remote_repository,
+    remote_repository_is_stale,
+    repository_is_stale,
+)
+from gitcontext.ingest.remote import is_github_url
 from gitcontext.ingest.repository import is_git_repository, scan_repository
 from gitcontext.retrieval import retrieve_with_metrics
 from gitcontext.vector_store import VectorStore
@@ -39,7 +46,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="GitContext API",
         version="0.2.0",
-        description="Local RAG backend for repository code, documentation, and history.",
+        description="RAG backend for local folders and online GitHub repositories.",
     )
     app.mount("/static", StaticFiles(directory=WEB_ROOT), name="static")
 
@@ -53,19 +60,29 @@ def create_app() -> FastAPI:
 
     @app.post("/api/scan", tags=["repository"])
     def scan(request: RepositoryRequest) -> dict[str, Any]:
-        repository = _repository_path(request.path)
         try:
-            files = scan_repository(repository)
+            if is_github_url(request.path):
+                token = Settings.for_repository(Path.cwd()).github_token
+                remote, files = prepare_remote_repository(request.path, token)
+                repository = remote.cache_path
+                repository_name = remote.url
+                is_git = True
+            else:
+                repository = _repository_path(request.path)
+                files = scan_repository(repository)
+                repository_name = str(repository)
+                is_git = is_git_repository(repository)
             settings = Settings.for_repository(repository)
             indexed_chunks = (
                 VectorStore(settings.database_path).count()
                 if settings.database_path.is_file() else 0
             )
-        except OSError as error:
+        except (OSError, RuntimeError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return {
-            "repository": str(repository),
-            "is_git": is_git_repository(repository),
+            "repository": repository_name,
+            "is_git": is_git,
+            "remote": is_github_url(request.path),
             "count": len(files),
             "files": [file.relative_to(repository).as_posix() for file in files],
             "indexed_chunks": indexed_chunks,
@@ -73,9 +90,11 @@ def create_app() -> FastAPI:
 
     @app.post("/api/index", tags=["repository"])
     def index(request: RepositoryRequest) -> dict[str, Any]:
-        repository = _repository_path(request.path)
         try:
-            summary = index_repository(repository)
+            if is_github_url(request.path):
+                summary = index_remote_repository(request.path)
+            else:
+                summary = index_repository(_repository_path(request.path))
         except (OSError, RuntimeError, ValueError) as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
         return {
@@ -95,12 +114,28 @@ def create_app() -> FastAPI:
 
     @app.post("/api/ask", tags=["retrieval"])
     def ask(request: QuestionRequest) -> dict[str, Any]:
-        repository = _repository_path(request.path)
+        remote = is_github_url(request.path)
+        if remote:
+            token = Settings.for_repository(Path.cwd()).github_token
+            try:
+                refreshed, remote_repository = remote_repository_is_stale(
+                    request.path, token
+                )
+                repository = remote_repository.cache_path
+            except (OSError, RuntimeError, ValueError) as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+        else:
+            repository = _repository_path(request.path)
         settings = Settings.for_repository(repository)
         try:
-            refreshed = repository_is_stale(repository)
+            refreshed = (
+                refreshed if remote else repository_is_stale(repository)
+            )
             if refreshed:
-                index_repository(repository, refresh_external=False)
+                if remote:
+                    index_remote_repository(request.path, remote=remote_repository)
+                else:
+                    index_repository(repository, refresh_external=False)
             store = VectorStore(settings.database_path)
             if store.count() == 0:
                 raise HTTPException(
