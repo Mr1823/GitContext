@@ -5,6 +5,10 @@ repositories. It indexes source code, project documentation, Git commit history,
 and (for GitHub remotes) pull request discussions and labeled incident reports.
 Questions return cited repository evidence, with optional LLM synthesis.
 
+## Architecture
+
+[![Architecture diagram of mr1823/gitcontext](https://gitdiagram.com/mr1823/gitcontext/diagram.png)](https://gitdiagram.com/mr1823/gitcontext?utm_source=readme&utm_medium=picture)
+
 ## Install
 
 Python 3.12 or 3.13 is required.
