@@ -6,11 +6,12 @@ const repoError = byId("repo-error");
 const fileList = byId("file-list");
 const questionInput = byId("question-input");
 const chatBody = byId("chat-body");
+const githubUrlPattern = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 let activeRepository = "";
 let indexed = false;
 
 const storedPath = sessionStorage.getItem("gitcontext.repository");
-if (storedPath) repoInput.value = storedPath;
+if (storedPath && githubUrlPattern.test(storedPath)) repoInput.value = storedPath;
 
 async function api(route, payload) {
   const response = await fetch(route, {
@@ -47,7 +48,7 @@ function renderFiles(files) {
   if (!files.length) {
     const empty = document.createElement("div");
     empty.className = "no-files";
-    empty.textContent = "No supported source files found in this folder.";
+    empty.textContent = "No supported source files found in this repository.";
     fileList.append(empty);
     return;
   }
@@ -65,6 +66,25 @@ function renderFiles(files) {
   }
 }
 
+function setIndexStatus(data) {
+  const files = Number.isInteger(data.source_files) ? data.source_files : data.count;
+  const chunks = Number.isInteger(data.chunks) ? data.chunks : data.indexed_chunks;
+  const commits = data.commits;
+  const pullRequests = data.pull_requests;
+  const incidents = data.incidents;
+  const hasIndex = (Number.isInteger(data.chunks) && data.chunks > 0)
+    || (Number.isInteger(data.indexed_chunks) && data.indexed_chunks > 0);
+  const fields = [];
+  if (Number.isInteger(files)) fields.push(`${files} files`);
+  if (Number.isInteger(chunks) && chunks > 0) fields.push(`${chunks} chunks`);
+  if (Number.isInteger(commits)) fields.push(`${commits} commits`);
+  if (Number.isInteger(pullRequests)) fields.push(`${pullRequests} pull requests`);
+  if (Number.isInteger(incidents)) fields.push(`${incidents} incidents`);
+  const line = byId("index-status");
+  line.textContent = hasIndex && fields.length ? `Index: ${fields.join(", ")}` : "";
+  line.classList.toggle("hidden", !line.textContent);
+}
+
 function showRepository(data) {
   const repositoryChanged = activeRepository && activeRepository !== data.repository;
   if (repositoryChanged) {
@@ -76,14 +96,13 @@ function showRepository(data) {
   sessionStorage.setItem("gitcontext.repository", activeRepository);
   byId("repo-name").textContent = activeRepository.split(/[\\/]/).filter(Boolean).pop() || activeRepository;
   byId("repo-full-path").textContent = activeRepository;
-  byId("git-badge").textContent = data.remote ? "Online GitHub" : data.is_git ? "Git repository" : "Folder";
-  byId("chunk-count").textContent = indexed ? String(data.indexed_chunks) : "—";
-  byId("index-state").textContent = indexed ? "Ready" : "Not indexed";
-  byId("chat-hint").textContent = indexed ? "Answers use your indexed source files" : "Build the search index to start asking questions";
+  byId("git-badge").textContent = data.remote ? "GitHub repository" : "";
+  byId("chunk-count").textContent = String(data.indexed_chunks);
+  setIndexStatus(data);
   questionInput.disabled = !indexed;
   byId("ask-button").disabled = !indexed;
   byId("index-button").disabled = false;
-  byId("index-button").querySelector("span:nth-child(2)").textContent = indexed ? "Rebuild search index" : "Build search index";
+  byId("index-button").querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
   byId("empty-chat").classList.toggle("hidden", indexed);
   renderFiles(data.files);
   repoPanel.classList.remove("hidden");
@@ -95,7 +114,7 @@ repoForm.addEventListener("submit", async (event) => {
   const path = repoInput.value.trim();
   if (!path) return;
   const button = byId("scan-button");
-  setBusy(button, true, "Scanning…");
+  setBusy(button, true, "Checking repository…");
   try {
     const result = await api("/api/scan", { path });
     showRepository(result);
@@ -103,8 +122,9 @@ repoForm.addEventListener("submit", async (event) => {
   } catch (error) {
     setNotice(error.message);
     repoPanel.classList.add("hidden");
+    setIndexStatus({});
   } finally {
-    setBusy(button, false, "Scan repository");
+    setBusy(button, false, "Index repository");
   }
 });
 
@@ -116,25 +136,23 @@ byId("index-button").addEventListener("click", async () => {
   setNotice("");
   try {
     const result = await api("/api/index", { path: activeRepository });
-    indexed = true;
+    indexed = result.chunks > 0;
     byId("chunk-count").textContent = String(result.chunks);
-    byId("index-state").textContent = "Ready";
-    byId("chat-hint").textContent = "Answers use your indexed source files";
-    questionInput.disabled = false;
-    byId("ask-button").disabled = false;
-    byId("empty-chat").classList.add("hidden");
-    button.querySelector("span:nth-child(2)").textContent = "Rebuild search index";
+    questionInput.disabled = !indexed;
+    byId("ask-button").disabled = !indexed;
+    byId("empty-chat").classList.toggle("hidden", indexed);
+    setIndexStatus(result);
+    button.querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
     const warnings = result.warnings || [];
     const warningBox = byId("index-warnings");
     warningBox.textContent = warnings.join(" ");
     warningBox.classList.toggle("hidden", warnings.length === 0);
-    byId("chat-hint").textContent = `Indexed ${result.commits} commits, ${result.pull_requests} pull requests, and ${result.incidents} incidents`;
   } catch (error) {
     setNotice(error.message);
   } finally {
     byId("index-progress").classList.add("hidden");
     button.disabled = false;
-    button.querySelector(".button-icon").textContent = "⌕";
+    button.querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
   }
 });
 
@@ -148,9 +166,6 @@ byId("file-filter").addEventListener("input", (event) => {
 function appendMessage(role, text, sources = [], latency = null) {
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
-  const avatar = document.createElement("div");
-  avatar.className = "message-avatar";
-  avatar.textContent = role === "user" ? "YOU" : "GC";
   const content = document.createElement("div");
   content.className = "message-content";
   const label = document.createElement("div");
@@ -160,57 +175,24 @@ function appendMessage(role, text, sources = [], latency = null) {
   body.className = "message-text";
   body.textContent = text;
   content.append(label, body);
-  wrapper.append(avatar, content);
-  chatBody.append(wrapper);
-  for (const source of sources) {
-    const card = document.createElement("details");
-    card.className = "source-card";
-    const summary = document.createElement("summary");
-    summary.textContent = `${source.path}:${source.start_line}-${source.end_line}`;
-    if (source.source_type && source.source_type !== "code") {
-      const type = document.createElement("span");
-      type.textContent = ` · ${source.source_type}`;
-      summary.append(type);
+  wrapper.append(content);
+  if (sources.length) {
+    const citations = document.createElement("aside");
+    citations.className = "message-citations";
+    citations.setAttribute("aria-label", "Answer citations");
+    for (const source of sources) {
+      const citation = document.createElement("details");
+      citation.className = "source-card";
+      const summary = document.createElement("summary");
+      summary.textContent = `${source.path}:${source.start_line}`;
+      const code = document.createElement("pre");
+      code.textContent = source.content;
+      citation.append(summary, code);
+      citations.append(citation);
     }
-    if (source.symbol) {
-      const symbol = document.createElement("span");
-      symbol.textContent = ` · ${source.symbol}`;
-      summary.append(symbol);
-    }
-    if (source.author) {
-      const author = document.createElement("span");
-      author.textContent = ` · ${source.author}`;
-      summary.append(author);
-    }
-    if (source.last_modified) {
-      const modified = document.createElement("span");
-      modified.textContent = ` · ${source.last_modified.slice(0, 10)}`;
-      summary.append(modified);
-    }
-    if (source.pr_number) {
-      const pull = document.createElement("span");
-      pull.textContent = ` · PR #${source.pr_number}`;
-      summary.append(pull);
-    }
-    if (source.commit_sha) {
-      const commit = document.createElement("span");
-      commit.textContent = ` · ${source.commit_sha.slice(0, 8)}`;
-      summary.append(commit);
-    }
-    if (source.source_url) {
-      const sourceLink = document.createElement("a");
-      sourceLink.className = "source-link";
-      sourceLink.href = source.source_url;
-      sourceLink.target = "_blank";
-      sourceLink.rel = "noopener noreferrer";
-      sourceLink.textContent = " · Open source";
-      summary.append(sourceLink);
-    }
-    const code = document.createElement("pre");
-    code.textContent = source.content;
-    card.append(summary, code);
-    chatBody.append(card);
+    wrapper.append(citations);
   }
+  chatBody.append(wrapper);
   chatBody.scrollTop = chatBody.scrollHeight;
 }
 
@@ -221,7 +203,7 @@ async function askQuestion(question) {
   questionInput.value = "";
   const loading = document.createElement("div");
   loading.className = "message assistant";
-  loading.innerHTML = '<div class="message-avatar">GC</div><div class="message-content"><div class="message-label">Searching your code</div><div class="loading-dots"><i></i><i></i><i></i></div></div>';
+  loading.innerHTML = '<div class="message-content"><div class="message-label">Searching repository files</div></div>';
   chatBody.append(loading);
   chatBody.scrollTop = chatBody.scrollHeight;
   byId("ask-button").disabled = true;

@@ -40,7 +40,7 @@ gitcontext = "gitcontext.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gitcontext = ["static/*.html", "static/*.css", "static/*.js"]
+gitcontext = ["static/*.html", "static/*.css", "static/*.js", "static/fonts/*.woff2", "static/fonts/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

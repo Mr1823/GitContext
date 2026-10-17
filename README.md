@@ -47,15 +47,16 @@ gitcontext ask "Where is authentication handled?" \
   --path https://github.com/owner/repository
 ```
 
-The web UI accepts the same GitHub URL. Private repositories require a
-`GITHUB_TOKEN` with repository read access. The `GITCONTEXT_REMOTE_CACHE`
-environment variable can change where fetched repository snapshots are cached.
+The web UI accepts public GitHub repository URLs only. Local folder paths remain
+available through the CLI. The `GITCONTEXT_REMOTE_CACHE` environment variable
+can change where fetched repository snapshots are cached.
 
 `gitcontext web` starts the FastAPI service and opens the browser UI at
 `http://127.0.0.1:8765`. API documentation is available at `/docs`. Paste a
-repository path in the UI, scan it, build the index, then ask questions. The
-server binds to localhost by default. Use `--host` and `--port` to choose another
-address; only bind beyond localhost on a network you trust.
+public GitHub repository URL in the UI, review its files, build the index, then
+ask questions. The server binds to localhost by default. Use `--host` and
+`--port` to choose another address; only bind beyond localhost on a network you
+trust.
 
 The scanner supports Python, JavaScript, JSX, TypeScript, TSX, Java, Markdown,
 MDX, reStructuredText, text, YAML, TOML, JSON, HTML, XML, SQL, and shell files.
