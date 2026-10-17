@@ -19,7 +19,7 @@ async function api(route, payload) {
     body: JSON.stringify(payload),
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(result.error || result.detail || `Request failed (${response.status})`);
   return result;
 }
 
@@ -124,6 +124,11 @@ byId("index-button").addEventListener("click", async () => {
     byId("ask-button").disabled = false;
     byId("empty-chat").classList.add("hidden");
     button.querySelector("span:nth-child(2)").textContent = "Rebuild search index";
+    const warnings = result.warnings || [];
+    const warningBox = byId("index-warnings");
+    warningBox.textContent = warnings.join(" ");
+    warningBox.classList.toggle("hidden", warnings.length === 0);
+    byId("chat-hint").textContent = `Indexed ${result.commits} commits, ${result.pull_requests} pull requests, and ${result.incidents} incidents`;
   } catch (error) {
     setNotice(error.message);
   } finally {
@@ -140,7 +145,7 @@ byId("file-filter").addEventListener("input", (event) => {
   }
 });
 
-function appendMessage(role, text, sources = []) {
+function appendMessage(role, text, sources = [], latency = null) {
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
   const avatar = document.createElement("div");
@@ -150,7 +155,7 @@ function appendMessage(role, text, sources = []) {
   content.className = "message-content";
   const label = document.createElement("div");
   label.className = "message-label";
-  label.textContent = role === "user" ? "You" : "GitContext";
+  label.textContent = role === "user" ? "You" : `GitContext${latency === null ? "" : ` · ${latency} ms retrieval`}`;
   const body = document.createElement("div");
   body.className = "message-text";
   body.textContent = text;
@@ -162,10 +167,35 @@ function appendMessage(role, text, sources = []) {
     card.className = "source-card";
     const summary = document.createElement("summary");
     summary.textContent = `${source.path}:${source.start_line}-${source.end_line}`;
+    if (source.source_type && source.source_type !== "code") {
+      const type = document.createElement("span");
+      type.textContent = ` · ${source.source_type}`;
+      summary.append(type);
+    }
     if (source.symbol) {
       const symbol = document.createElement("span");
       symbol.textContent = ` · ${source.symbol}`;
       summary.append(symbol);
+    }
+    if (source.author) {
+      const author = document.createElement("span");
+      author.textContent = ` · ${source.author}`;
+      summary.append(author);
+    }
+    if (source.last_modified) {
+      const modified = document.createElement("span");
+      modified.textContent = ` · ${source.last_modified.slice(0, 10)}`;
+      summary.append(modified);
+    }
+    if (source.pr_number) {
+      const pull = document.createElement("span");
+      pull.textContent = ` · PR #${source.pr_number}`;
+      summary.append(pull);
+    }
+    if (source.commit_sha) {
+      const commit = document.createElement("span");
+      commit.textContent = ` · ${source.commit_sha.slice(0, 8)}`;
+      summary.append(commit);
     }
     const code = document.createElement("pre");
     code.textContent = source.content;
@@ -189,7 +219,7 @@ async function askQuestion(question) {
   try {
     const result = await api("/api/ask", { path: activeRepository, question: question.trim(), top_k: 6 });
     loading.remove();
-    appendMessage("assistant", result.answer, result.sources);
+    appendMessage("assistant", result.answer, result.sources, result.retrieval_ms);
   } catch (error) {
     loading.remove();
     appendMessage("assistant", error.message);

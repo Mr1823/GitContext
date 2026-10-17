@@ -14,6 +14,14 @@ dependencies = [
     "rich",
     "gitpython",
     "rank-bm25",
+    "fastapi",
+    "uvicorn[standard]",
+    "tree-sitter",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-java",
+    "qdrant-client",
 ]
 
 [project.optional-dependencies]

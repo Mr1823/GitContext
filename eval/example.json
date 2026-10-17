@@ -1,0 +1,12 @@
+[
+  {
+    "question": "Which function builds and stores the repository index?",
+    "relevant_paths": ["src/gitcontext/indexer.py"],
+    "reference_answer": "index_repository incrementally hashes files, creates chunks and embeddings, then stores them in SQLite and Qdrant."
+  },
+  {
+    "question": "How are Python functions and classes parsed?",
+    "relevant_paths": ["src/gitcontext/ingest/parser.py"],
+    "reference_answer": "Python source is parsed with the AST into function, async function, and class declarations."
+  }
+]

@@ -18,7 +18,7 @@ def test_scan_finds_supported_files_and_skips_ignored_directories(tmp_path: Path
     (ignored / "index.js").write_text("ignored")
 
     assert scan_repository(tmp_path) == [
-        source / "app.ts", source / "main.PY",
+        source / "app.ts", source / "main.PY", source / "notes.md",
     ]
 
 

@@ -6,10 +6,14 @@ from pathlib import Path
 from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError
 
-SUPPORTED_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx", ".java"}
+SUPPORTED_EXTENSIONS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java",
+    ".md", ".mdx", ".rst", ".txt", ".yaml", ".yml", ".toml",
+    ".json", ".html", ".xml", ".sql", ".sh",
+}
 IGNORED_DIRECTORIES = {
     ".git", ".venv", "venv", "node_modules", "__pycache__",
-    ".pytest_cache", ".mypy_cache", "dist", "build",
+    ".pytest_cache", ".mypy_cache", ".gitcontext", "dist", "build",
 }
 
 

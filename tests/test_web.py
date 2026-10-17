@@ -1,12 +1,12 @@
-import json
+import asyncio
 from pathlib import Path
-from threading import Thread
-from urllib.request import Request, urlopen
 
-from gitcontext.web import create_server
+import httpx
+
+from gitcontext.web import create_app
 
 
-def test_web_ui_and_repository_api_work_end_to_end(tmp_path: Path, monkeypatch) -> None:
+def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -> None:
     repository = tmp_path / "repo"
     repository.mkdir()
     (repository / "auth.py").write_text(
@@ -14,34 +14,24 @@ def test_web_ui_and_repository_api_work_end_to_end(tmp_path: Path, monkeypatch) 
     )
     monkeypatch.setenv("GITCONTEXT_DATABASE", str(tmp_path / "index.sqlite"))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    server = create_server("127.0.0.1", 0)
-    thread = Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            home = await client.get("/")
+            assert home.status_code == 200
+            assert "Understand your codebase" in home.text
+            assert (await client.get("/static/app.js")).status_code == 200
+            scan = await client.post("/api/scan", json={"path": str(repository)})
+            assert scan.status_code == 200
+            assert scan.json()["files"] == ["auth.py"]
+            indexed = await client.post("/api/index", json={"path": str(repository)})
+            assert indexed.status_code == 200
+            assert indexed.json()["chunks"] > 0
+            answer = await client.post("/api/ask", json={
+                "path": str(repository), "question": "How authenticate user?",
+            })
+            assert answer.status_code == 200
+            assert "auth.py" in answer.json()["answer"]
+            assert answer.json()["sources"][0]["path"] == "auth.py"
 
-    def post(route: str, payload: dict) -> dict:
-        request = Request(
-            origin + route,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urlopen(request) as response:
-            return json.load(response)
-
-    try:
-        with urlopen(origin + "/") as response:
-            assert "Understand your codebase" in response.read().decode()
-        scan = post("/api/scan", {"path": str(repository)})
-        assert scan["files"] == ["auth.py"]
-        indexed = post("/api/index", {"path": str(repository)})
-        assert indexed["chunks"] > 0
-        answer = post("/api/ask", {
-            "path": str(repository), "question": "How authenticate user?",
-        })
-        assert "auth.py" in answer["answer"]
-        assert answer["sources"][0]["path"] == "auth.py"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+    asyncio.run(workflow())

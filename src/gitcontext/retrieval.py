@@ -1,11 +1,12 @@
 """Hybrid lexical and optional semantic retrieval."""
 
 import re
+from time import perf_counter
 from typing import Any
 
 from rank_bm25 import BM25Okapi
 
-from gitcontext.embeddings import encode_texts
+from gitcontext.embeddings import encode_texts, rerank_texts
 from gitcontext.vector_store import VectorStore
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
@@ -30,6 +31,8 @@ def retrieve(
     store: VectorStore,
     limit: int = 6,
     embedding_model: str | None = None,
+    reranker_model: str | None = None,
+    candidate_limit: int = 40,
 ) -> list[dict[str, Any]]:
     """Rank indexed code by BM25 and, when available, semantic similarity."""
     chunks = store.all()
@@ -53,24 +56,43 @@ def retrieve(
     lexical_max = max(lexical_scores, default=0.0)
     lexical_scores = [score / lexical_max if lexical_max else 0.0 for score in lexical_scores]
 
-    semantic_scores = [0.0] * len(chunks)
+    semantic_scores: dict[int, float] = {}
     if embedding_model and any(chunk["embedding"] for chunk in chunks):
         query_vector = encode_texts([query], embedding_model)[0]
-        for index, chunk in enumerate(chunks):
-            vector = chunk["embedding"]
-            if vector and len(vector) == len(query_vector):
-                semantic_scores[index] = max(
-                    0.0, sum(a * b for a, b in zip(vector, query_vector))
-                )
+        semantic_scores = store.semantic_search(query_vector, max(limit * 8, candidate_limit))
 
     combined = []
     for index, chunk in enumerate(chunks):
         symbol_matches = len(set(tokenize(query)) & set(tokenize(chunk["symbol"])))
-        score = (
-            0.55 * lexical_scores[index] + 0.45 * semantic_scores[index]
-            if any(semantic_scores) else lexical_scores[index]
-        )
+        semantic_score = semantic_scores.get(chunk["id"], 0.0)
+        score = 0.55 * lexical_scores[index] + 0.45 * semantic_score if semantic_scores else lexical_scores[index]
         score += 0.35 * symbol_matches
         if score > 0:
             combined.append({**chunk, "score": score})
-    return sorted(combined, key=lambda item: (-item["score"], item["path"], item["start_line"]))[:limit]
+    ranked = sorted(combined, key=lambda item: (-item["score"], item["path"], item["start_line"]))
+    candidates = ranked[:max(limit, candidate_limit)]
+    if reranker_model and candidates:
+        scores = rerank_texts(
+            query,
+            [f"{item['symbol']}\n{item['path']}\n{item['content']}" for item in candidates],
+            reranker_model,
+        )
+        candidates = [
+            {**item, "retrieval_score": item["score"], "score": scores[index]}
+            for index, item in enumerate(candidates)
+        ]
+        candidates.sort(key=lambda item: (-item["score"], item["path"], item["start_line"]))
+    return candidates[:limit]
+
+
+def retrieve_with_metrics(
+    query: str,
+    store: VectorStore,
+    limit: int = 6,
+    embedding_model: str | None = None,
+    reranker_model: str | None = None,
+) -> tuple[list[dict[str, Any]], float]:
+    """Run retrieval and return results plus elapsed milliseconds."""
+    started = perf_counter()
+    results = retrieve(query, store, limit, embedding_model, reranker_model)
+    return results, (perf_counter() - started) * 1000
