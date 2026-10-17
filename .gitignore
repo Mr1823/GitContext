@@ -13,6 +13,7 @@ __pycache__/
 # Generated vector database and indexes
 data/
 .qdrant/
+.gitcontext/
 
 # macOS and editors
 .DS_Store

@@ -13,17 +13,13 @@ dependencies = [
     "typer",
     "rich",
     "gitpython",
-    "tree-sitter",
-    "tree-sitter-python",
-    "qdrant-client",
-    "sentence-transformers",
     "rank-bm25",
-    "python-dotenv",
-    "pydantic",
-    "pydantic-settings",
 ]
 
 [project.optional-dependencies]
+semantic = [
+    "sentence-transformers",
+]
 dev = [
     "pytest",
     "ruff",
@@ -34,6 +30,9 @@ gitcontext = "gitcontext.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+gitcontext = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
