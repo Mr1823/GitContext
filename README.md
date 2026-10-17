@@ -7,7 +7,7 @@ Questions return cited repository evidence, with optional LLM synthesis.
 
 ## Architecture
 
-[![Architecture diagram of mr1823/gitcontext](https://gitdiagram.com/mr1823/gitcontext/diagram.png)](https://gitdiagram.com/mr1823/gitcontext?utm_source=readme&utm_medium=picture)
+![GitContext architecture](docs/architecture.png)
 
 ## Install
 
