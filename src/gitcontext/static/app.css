@@ -7,3 +7,5 @@
 
 
 .brand-lockup{display:inline-flex;align-items:center;gap:9px;color:var(--text);font:600 24px/1 var(--sans);letter-spacing:-1px;white-space:nowrap}.brand-symbol{display:block;width:40px;height:40px;flex:0 0 auto}.brand-wordmark{display:inline-flex;align-items:baseline}.brand-context{color:var(--accent)}@media(max-width:520px){.brand-lockup{font-size:22px}.brand-symbol{width:36px;height:36px}}
+
+.welcome-copy{min-width:0}.orbit-emblem{width:180px;height:118px;flex:0 0 auto;margin-right:12px;overflow:visible}@media(max-width:520px){.welcome-row{gap:8px}.orbit-emblem{width:82px;height:68px;margin-right:0}}

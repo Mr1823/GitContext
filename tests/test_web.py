@@ -46,6 +46,8 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
             assert home.status_code == 200
             assert "Ask a question. Get the file it came from." in home.text
             assert 'class="brand-lockup" role="img" aria-label="GitContext"' in home.text
+            assert 'class="orbit-emblem" viewBox="0 0 200 130"' in home.text
+            assert home.text.count('M15 14v16M22 11v21M29 14v16') == 2
             assert (await client.get("/static/app.js")).status_code == 200
             scan = await client.post(
                 "/api/scan", json={"path": "https://github.com/owner/repo"}

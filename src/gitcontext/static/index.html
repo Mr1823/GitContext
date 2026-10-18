@@ -9,7 +9,7 @@
     <meta property="og:description" content="Paste a public GitHub repository URL. GitContext indexes its code and history, then answers with citations you can check." />
     <meta property="og:type" content="website" />
     <title>GitContext - Repository Q&amp;A</title>
-    <link rel="stylesheet" href="/static/app.css?v=4" />
+    <link rel="stylesheet" href="/static/app.css?v=5" />
     <script src="/static/app.js?v=5" defer></script>
   </head>
   <body>
@@ -29,11 +29,26 @@
 
         <div class="content-wrap">
           <section class="welcome-row">
-            <div>
+            <div class="welcome-copy">
               <h1>Ask a question. Get the file it came from.</h1>
               <p class="subtitle">Paste a public GitHub repository URL. GitContext indexes its code and history, then answers with citations you can check.</p>
               <p class="index-status hidden" id="index-status" aria-live="polite"></p>
             </div>
+            <svg class="orbit-emblem" viewBox="0 0 200 130" aria-hidden="true" focusable="false">
+              <g fill="none" stroke="var(--border)" stroke-width="1.5" opacity=".9">
+                <ellipse cx="100" cy="65" rx="72" ry="27" transform="rotate(-31 100 65)" />
+                <ellipse cx="100" cy="65" rx="72" ry="27" transform="rotate(31 100 65)" />
+              </g>
+              <circle cx="148" cy="22" r="4" fill="var(--accent)" />
+              <circle cx="35" cy="59" r="2.7" fill="var(--accent)" opacity=".8" />
+              <circle cx="112" cy="112" r="3" fill="var(--accent)" opacity=".9" />
+              <g transform="translate(78 43)">
+                <g transform="rotate(-8 22 22)">
+                  <rect x="4" y="4" width="36" height="36" rx="12" fill="none" stroke="var(--border)" stroke-width="2" />
+                  <path d="M15 14v16M22 11v21M29 14v16" fill="none" stroke="var(--accent)" stroke-width="4.5" stroke-linecap="round" />
+                </g>
+              </g>
+            </svg>
           </section>
 
           <section class="repo-card panel">
