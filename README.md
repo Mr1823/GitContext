@@ -31,6 +31,7 @@ source text, provenance, file hashes, and settings.
 gitcontext --help
 gitcontext scan /path/to/repository
 gitcontext index /path/to/repository
+gitcontext diagram /path/to/repository --out ./architecture
 gitcontext ask "Where is authentication handled?" --path /path/to/repository
 gitcontext web
 ```
@@ -43,9 +44,17 @@ supported too.
 ```bash
 gitcontext scan https://github.com/owner/repository
 gitcontext index https://github.com/owner/repository
+gitcontext diagram https://github.com/owner/repository --out ./architecture
 gitcontext ask "Where is authentication handled?" \
   --path https://github.com/owner/repository
 ```
+
+`gitcontext diagram` requires an existing index that matches the repository.
+It writes `diagram.json` and `diagram.mmd` to the output directory. The
+`GET /api/diagram?repo=https://github.com/owner/repository` endpoint uses an
+existing remote index and returns `409` when one is missing. It does not fetch,
+scan, or rebuild the repository. The generated diagram is cached in the index
+settings table.
 
 The web UI accepts public GitHub repository URLs only. Local folder paths remain
 available through the CLI. The `GITCONTEXT_REMOTE_CACHE` environment variable
@@ -58,8 +67,9 @@ ask questions. The server binds to localhost by default. Use `--host` and
 `--port` to choose another address; only bind beyond localhost on a network you
 trust.
 
-The scanner supports Python, JavaScript, JSX, TypeScript, TSX, Java, Markdown,
-MDX, reStructuredText, text, YAML, TOML, JSON, HTML, XML, SQL, and shell files.
+The scanner supports Python, JavaScript, JSX, TypeScript, TSX, Java, CSS,
+Markdown, MDX, reStructuredText, text, YAML, TOML, JSON, HTML, XML, SQL, and
+shell files.
 Python declarations are parsed with Python's AST. JavaScript, TypeScript, and
 Java declarations use Tree-sitter. Documentation is chunked by Markdown
 headings or overlapping line windows. Oversized declarations are split with

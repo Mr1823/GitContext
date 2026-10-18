@@ -9,8 +9,8 @@
     <meta property="og:description" content="Paste a public GitHub repository URL. GitContext indexes its code and history, then answers with citations you can check." />
     <meta property="og:type" content="website" />
     <title>GitContext - Repository Q&amp;A</title>
-    <link rel="stylesheet" href="/static/app.css?v=5" />
-    <script src="/static/app.js?v=5" defer></script>
+    <link rel="stylesheet" href="/static/app.css?v=8" />
+    <script src="/static/app.js?v=7" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -65,6 +65,23 @@
           </section>
 
           <section id="repository-panel" class="workspace-grid hidden">
+            <section class="panel diagram-panel" aria-labelledby="diagram-title">
+              <div class="diagram-heading">
+                <div>
+                  <div class="eyebrow small-eyebrow">REPOSITORY MAP</div>
+                  <h2 id="diagram-title">Architecture diagram</h2>
+                  <p>Import relationships from the current index.</p>
+                </div>
+                <button class="button button-primary" id="diagram-button" type="button" disabled><span>Generate diagram</span></button>
+              </div>
+              <p id="diagram-status" class="diagram-status" aria-live="polite">Build the search index to generate a diagram.</p>
+              <div id="diagram-output" class="diagram-output hidden" role="region" aria-label="Repository architecture diagram" tabindex="0"></div>
+              <details id="diagram-sources" class="diagram-sources hidden">
+                <summary>Source references</summary>
+                <ul id="diagram-source-list"></ul>
+              </details>
+            </section>
+
             <div class="left-column">
               <section class="panel repo-summary">
                 <div class="panel-header"><div><div class="eyebrow small-eyebrow">CURRENT REPOSITORY</div><h2 id="repo-name">Repository</h2></div><span class="git-badge" id="git-badge"></span></div>

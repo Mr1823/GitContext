@@ -1,12 +1,16 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import typer
+from git import Repo
+from git.exc import GitCommandError, InvalidGitRepositoryError
 from rich.console import Console
 from rich.table import Table
 
 from gitcontext.answer import answer_question
 from gitcontext.config import Settings
+from gitcontext.diagram import generate_diagram, source_extension
 from gitcontext.evaluation import (
     citation_accuracy,
     evaluate_retrieval,
@@ -38,6 +42,13 @@ ASK_PATH_OPTION = typer.Option(
     str(Path.cwd()), "--path", "-p", help="Local repository folder or GitHub repository URL."
 )
 TOP_K_OPTION = typer.Option(6, "--top-k", min=1, max=20, help="Maximum evidence chunks.")
+DIAGRAM_OUTPUT_OPTION = typer.Option(
+    Path("."), "--out", file_okay=False, dir_okay=True,
+    help="Directory for diagram.json and diagram.mmd.",
+)
+INCLUDE_TESTS_OPTION = typer.Option(
+    False, "--include-tests", help="Include test source files in the diagram."
+)
 ASK_QUESTION_ARGUMENT = typer.Argument(..., help="Question to ask about the repository.")
 EVALUATION_FIXTURE_ARGUMENT = typer.Argument(
     ..., exists=True, dir_okay=False, readable=True, help="JSON evaluation fixture."
@@ -134,6 +145,115 @@ def index(
     console.print(table)
     for warning in summary.warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")
+
+
+@app.command()
+def diagram(
+    path: str = REPOSITORY_PATH_ARGUMENT,
+    out: Path = DIAGRAM_OUTPUT_OPTION,
+    include_tests: bool = INCLUDE_TESTS_OPTION,
+) -> None:
+    """Generate an architecture diagram from an existing repository index."""
+    try:
+        token = Settings.for_repository(Path.cwd()).github_token
+        if is_github_url(path):
+            remote, files = prepare_remote_repository(path, token)
+            root = remote.cache_path
+            repository_identity = remote.url
+            commit_sha = remote.head_sha
+        else:
+            root = Path(path).expanduser().resolve()
+            if not root.is_dir():
+                raise NotADirectoryError(f"Repository folder does not exist: {root}")
+            files = scan_repository(root)
+            repository_identity = str(root)
+            try:
+                commit_sha = Repo(root, search_parent_directories=False).head.commit.hexsha
+            except (InvalidGitRepositoryError, GitCommandError, ValueError):
+                commit_sha = None
+
+        settings = Settings.for_repository(root)
+        if not settings.database_path.is_file():
+            raise RuntimeError("No existing index was found. Run `gitcontext index` first.")
+        store = VectorStore(settings.database_path)
+        if is_github_url(path):
+            if (store.value("remote_url") != repository_identity
+                    or store.value("remote_head_sha") != commit_sha):
+                raise RuntimeError(
+                    "The GitHub index is missing or stale. Run `gitcontext index` first."
+                )
+        elif is_git_repository(root) and store.value("head_sha") != (commit_sha or ""):
+            raise RuntimeError("The repository index is stale. Run `gitcontext index` first.")
+
+        paths = [file.relative_to(root).as_posix() for file in files]
+        source_files = [file for file in paths if source_extension(file) in {
+            ".py", ".js", ".jsx", ".ts", ".tsx"
+        }]
+        contents = {}
+        hashes = store.file_hashes()
+        for relative in source_files:
+            file_path = root / relative
+            try:
+                raw_content = file_path.read_bytes()
+                content = raw_content.decode("utf-8")
+            except (OSError, UnicodeError) as error:
+                raise RuntimeError(f"Could not read indexed source file: {relative}") from error
+            contents[relative] = content
+            if hashes.get(relative) != sha256(raw_content).hexdigest():
+                raise RuntimeError(
+                    f"The index does not match {relative}. Run `gitcontext index` first."
+                )
+        readme = ""
+        readme_file = next((file for file in files
+                            if file.parent == root and file.stem.lower() == "readme"), None)
+        if readme_file:
+            try:
+                readme = readme_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                readme = ""
+
+        run_diagnostics: list[dict[str, str]] = []
+        result = generate_diagram(
+            root, repository_identity, commit_sha, paths, contents, readme, store, settings,
+            stored_hashes=hashes, include_tests=include_tests,
+            run_diagnostics=run_diagnostics,
+        )
+        out = out.expanduser().resolve()
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "diagram.json").write_text(
+            json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        (out / "diagram.mmd").write_text(result["mermaid"], encoding="utf-8")
+    except (OSError, RuntimeError, ValueError) as error:
+        console.print(f"[bold red]Diagram generation failed:[/bold red] {error}")
+        raise typer.Exit(code=1) from error
+
+    table = Table(title="GitContext Architecture Diagram")
+    table.add_column("Property", style="cyan")
+    table.add_column("Result", style="green")
+    table.add_row("Nodes", str(len(result["nodes"])))
+    table.add_row("Edges", str(len(result["edges"])))
+    table.add_row("LLM calls", str(result["llm_calls_made"]))
+    table.add_row(
+        "LLM retries", str(sum(item["type"] == "retry" for item in run_diagnostics))
+    )
+    rejected_labels = [
+        item["reason"] for item in run_diagnostics
+        if item["type"] == "rejected_response" and item["phase"] == "labels"
+        and item["reason"].startswith(("Node label ", "Edge label ", "Label "))
+    ]
+    table.add_row(
+        "Rejected label rules", "; ".join(rejected_labels) if rejected_labels else "None"
+    )
+    table.add_row("Cache", "Hit" if result["cache_hit"] else "Miss")
+    table.add_row("Labels", result["labels_status"])
+    table.add_row(
+        "Not analysed",
+        ", ".join(f'{item["extension"]}: {item["file_count"]}'
+                   for item in result["not_analysed"]) or "None",
+    )
+    table.add_row("Output", str(out))
+    console.print(table)
 
 
 @app.command()

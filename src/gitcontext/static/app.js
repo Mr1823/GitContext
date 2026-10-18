@@ -9,6 +9,8 @@ const chatBody = byId("chat-body");
 const githubUrlPattern = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 let activeRepository = "";
 let indexed = false;
+let mermaidPromise;
+let diagramRenderNumber = 0;
 
 const storedPath = sessionStorage.getItem("gitcontext.repository");
 if (storedPath && githubUrlPattern.test(storedPath)) repoInput.value = storedPath;
@@ -22,6 +24,137 @@ async function api(route, payload) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || result.detail || `Request failed (${response.status})`);
   return result;
+}
+
+async function apiGet(route) {
+  const response = await fetch(route, { headers: { Accept: "application/json" } });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || result.detail || `Request failed (${response.status})`);
+  return result;
+}
+
+function updateDiagramAvailability() {
+  const button = byId("diagram-button");
+  const output = byId("diagram-output");
+  const status = byId("diagram-status");
+  button.disabled = !indexed;
+  button.querySelector("span").textContent = output.hasChildNodes()
+    ? "Refresh diagram"
+    : "Generate diagram";
+  if (!indexed) status.textContent = "Build the search index to generate a diagram.";
+  else if (!output.hasChildNodes() && status.textContent === "Build the search index to generate a diagram.") {
+    status.textContent = "Generate a diagram from this repository's current index.";
+  }
+}
+
+function resetDiagram() {
+  byId("diagram-output").replaceChildren();
+  byId("diagram-output").classList.add("hidden");
+  byId("diagram-sources").classList.add("hidden");
+  byId("diagram-source-list").replaceChildren();
+  byId("diagram-status").textContent = "Build the search index to generate a diagram.";
+  updateDiagramAvailability();
+}
+
+function loadMermaid() {
+  if (!mermaidPromise) {
+    mermaidPromise = import("https://cdn.jsdelivr.net/npm/mermaid@12.2.0/dist/mermaid.esm.min.mjs")
+      .then((module) => module.default)
+      .catch((error) => {
+        mermaidPromise = undefined;
+        throw error;
+      });
+  }
+  return mermaidPromise;
+}
+
+function safeSvg(svgText) {
+  const document = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  const root = document.documentElement;
+  if (root.localName.toLowerCase() !== "svg" || document.querySelector("parsererror")) {
+    throw new Error("The diagram renderer returned invalid SVG.");
+  }
+  for (const element of [root, ...root.querySelectorAll("*")]) {
+    if (["script", "iframe", "object", "embed"].includes(element.localName.toLowerCase())) {
+      element.remove();
+      continue;
+    }
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith("on") || ((name === "href" || name.endsWith(":href")) && !attribute.value.startsWith("#"))) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return document.importNode(root, true);
+}
+
+function renderDiagramSources(citations) {
+  const list = byId("diagram-source-list");
+  list.replaceChildren();
+  for (const citation of citations) {
+    if (typeof citation.path !== "string") continue;
+    const item = document.createElement("li");
+    const label = document.createElement("code");
+    label.textContent = citation.start_line
+      ? `${citation.path}:${citation.start_line}`
+      : citation.path;
+    item.append(label);
+    list.append(item);
+  }
+  byId("diagram-sources").classList.toggle("hidden", list.childElementCount === 0);
+}
+
+async function generateDiagram() {
+  if (!activeRepository || !indexed) return;
+  const button = byId("diagram-button");
+  setBusy(button, true, "Generating…");
+  byId("diagram-status").textContent = "Reading the current index and rendering its import map…";
+  try {
+    const result = await apiGet(`/api/diagram?repo=${encodeURIComponent(activeRepository)}`);
+    if (typeof result.mermaid !== "string") throw new Error("The diagram response did not include Mermaid source.");
+    const mermaid = await loadMermaid();
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: "base",
+      flowchart: { htmlLabels: false, useMaxWidth: false },
+      themeVariables: {
+        background: "#111410",
+        primaryColor: "#171b16",
+        primaryTextColor: "#eef1e9",
+        primaryBorderColor: "#b9f279",
+        lineColor: "#899286",
+        secondaryColor: "#1b201a",
+        tertiaryColor: "#111410",
+        mainBkg: "#171b16",
+        nodeBorder: "#b9f279",
+        clusterBkg: "#171b16",
+        clusterBorder: "#2b3229",
+        titleColor: "#eef1e9",
+        edgeLabelBackground: "#111410",
+        fontFamily: "DM Sans, sans-serif",
+        fontSize: "14px",
+      },
+    });
+    diagramRenderNumber += 1;
+    const rendered = await mermaid.render(`gitcontext-diagram-${diagramRenderNumber}`, result.mermaid);
+    const output = byId("diagram-output");
+    output.replaceChildren(safeSvg(rendered.svg));
+    output.classList.remove("hidden");
+    renderDiagramSources(Array.isArray(result.citations) ? result.citations : []);
+    const nodeCount = Array.isArray(result.nodes) ? result.nodes.length : 0;
+    const edgeCount = Array.isArray(result.edges) ? result.edges.length : 0;
+    const notAnalysed = Array.isArray(result.not_analysed) ? result.not_analysed : [];
+    const excluded = notAnalysed.map((item) => `${item.extension} (${item.file_count})`).join(", ");
+    const status = [`${nodeCount} ${nodeCount === 1 ? "node" : "nodes"}`, `${edgeCount} ${edgeCount === 1 ? "import" : "imports"}`, typeof result.labels_status === "string" ? `Labels: ${result.labels_status}` : ""];
+    if (excluded) status.push(`Not analyzed: ${excluded}`);
+    byId("diagram-status").textContent = status.filter(Boolean).join(" · ");
+  } catch (error) {
+    byId("diagram-status").textContent = error.message || "Could not generate the diagram.";
+  } finally {
+    updateDiagramAvailability();
+  }
 }
 
 function setNotice(message) {
@@ -90,6 +223,7 @@ function showRepository(data) {
   if (repositoryChanged) {
     chatBody.replaceChildren(byId("empty-chat"));
     byId("empty-chat").classList.remove("hidden");
+    resetDiagram();
   }
   activeRepository = data.repository;
   indexed = Boolean(data.indexed_chunks);
@@ -101,6 +235,7 @@ function showRepository(data) {
   setIndexStatus(data);
   questionInput.disabled = !indexed;
   byId("ask-button").disabled = !indexed;
+  updateDiagramAvailability();
   byId("index-button").disabled = false;
   byId("index-button").querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
   byId("empty-chat").classList.toggle("hidden", indexed);
@@ -140,6 +275,7 @@ byId("index-button").addEventListener("click", async () => {
     byId("chunk-count").textContent = String(result.chunks);
     questionInput.disabled = !indexed;
     byId("ask-button").disabled = !indexed;
+    updateDiagramAvailability();
     byId("empty-chat").classList.toggle("hidden", indexed);
     setIndexStatus(result);
     button.querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
@@ -155,6 +291,8 @@ byId("index-button").addEventListener("click", async () => {
     button.querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
   }
 });
+
+byId("diagram-button").addEventListener("click", generateDiagram);
 
 byId("file-filter").addEventListener("input", (event) => {
   const filter = event.target.value.toLowerCase();

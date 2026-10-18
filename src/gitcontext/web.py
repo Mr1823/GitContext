@@ -12,11 +12,18 @@ from pydantic import BaseModel, Field
 
 from gitcontext.answer import answer_question
 from gitcontext.config import Settings
+from gitcontext.diagram import (
+    generate_diagram,
+    indexed_readme,
+    reconstruct_indexed_contents,
+    source_extension,
+)
 from gitcontext.indexer import (
     index_remote_repository,
     prepare_remote_repository,
     remote_repository_is_stale,
 )
+from gitcontext.ingest.remote import _cache_root
 from gitcontext.retrieval import retrieve_with_metrics
 from gitcontext.vector_store import VectorStore
 
@@ -173,6 +180,52 @@ def create_app() -> FastAPI:
                 for item in results
             ],
         }
+
+    @app.get("/api/diagram", tags=["repository"])
+    def diagram(repo: str) -> dict[str, Any]:
+        repository_url = _public_github_url(repo)
+        owner, name = repository_url.removeprefix("https://github.com/").split("/")
+        repository = _cache_root() / owner / name
+        settings = Settings.for_repository(repository)
+        if not settings.database_path.is_file():
+            raise HTTPException(
+                status_code=409,
+                detail="This repository has no existing index. Build its index first.",
+            )
+        try:
+            store = VectorStore(settings.database_path)
+            if store.value("remote_url") != repository_url:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This repository has no existing index. Build its index first.",
+                )
+            commit_sha = store.value("remote_head_sha")
+            if not commit_sha:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This repository has no indexed commit. Build its index first.",
+                )
+            hashes = store.file_hashes()
+            paths = sorted(hashes)
+            source_files = [path for path in paths if source_extension(path) in {
+                ".py", ".js", ".jsx", ".ts", ".tsx"
+            }]
+            if not source_files:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The existing index contains no Python or JS/TS source files.",
+                )
+            chunks = store.all()
+            contents = reconstruct_indexed_contents(chunks, source_files)
+            result = generate_diagram(
+                repository, repository_url, commit_sha, paths, contents,
+                indexed_readme(chunks), store, settings, stored_hashes=hashes,
+            )
+        except HTTPException:
+            raise
+        except (OSError, RuntimeError, ValueError) as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+        return result
 
     return app
 

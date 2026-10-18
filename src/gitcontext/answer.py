@@ -36,6 +36,38 @@ def format_evidence_answer(results: list[dict[str, Any]]) -> str:
     return "\n".join(sections)
 
 
+def complete_json(prompt: str, settings: Settings) -> str:
+    """Request JSON text from the configured OpenAI-compatible chat endpoint."""
+    if not settings.llm_api_key:
+        raise RuntimeError("Set OPENAI_API_KEY to use structured generation.")
+    payload = {
+        "model": settings.llm_model,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": "Return one JSON object and no prose."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    request = Request(
+        f"{settings.llm_base_url.rstrip('/')}/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {settings.llm_api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=45) as response:
+            data = json.loads(response.read())
+        return data["choices"][0]["message"]["content"].strip()
+    except HTTPError as error:
+        detail = error.read().decode(errors="replace")[:500]
+        raise RuntimeError(f"Answer service returned HTTP {error.code}: {detail}") from error
+    except (URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Could not generate JSON: {error}") from error
+
+
 def answer_question(
     question: str,
     results: list[dict[str, Any]],
