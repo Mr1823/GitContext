@@ -95,14 +95,29 @@ def _github_json(url: str, token: str | None) -> dict | list:
     raise RuntimeError("GitHub returned an unexpected response.")
 
 
-def get_remote_repository(value: str, token: str | None = None) -> RemoteRepository:
+def get_remote_repository(
+    value: str,
+    token: str | None = None,
+    *,
+    public_only: bool = False,
+) -> RemoteRepository:
     """Resolve the default branch and latest commit for a GitHub repository."""
     slug = parse_github_url(value)
     if not slug:
         raise ValueError("Enter a GitHub repository URL such as https://github.com/owner/repo.")
-    metadata = _github_json(f"https://api.github.com/repos/{slug}", token)
+    try:
+        metadata = _github_json(f"https://api.github.com/repos/{slug}", token)
+    except RuntimeError as error:
+        if public_only and "repository was not found or is private" in str(error):
+            raise ValueError(
+                "This interface accepts public GitHub repositories only. "
+                "Check the URL and repository visibility."
+            ) from error
+        raise
     if not isinstance(metadata, dict):
         raise TypeError("GitHub did not return repository details.")
+    if public_only and metadata.get("private") is not False:
+        raise ValueError("This interface accepts public GitHub repositories only.")
     branch = metadata.get("default_branch")
     if not isinstance(branch, str) or not branch:
         raise RuntimeError("GitHub repository has no default branch.")

@@ -210,7 +210,17 @@ async function askQuestion(question) {
   try {
     const result = await api("/api/ask", { path: activeRepository, question: question.trim(), top_k: 6 });
     loading.remove();
-    appendMessage("assistant", result.answer, result.sources, result.retrieval_ms);
+    if (typeof result.index_refreshed === "boolean") {
+      const status = byId("index-status");
+      const counts = result.index_refreshed ? "" : status.textContent.split(" · ")[0];
+      const freshness = result.index_refreshed ? "Index refreshed from GitHub" : "Index current";
+      status.textContent = [counts, freshness].filter(Boolean).join(" · ");
+      status.classList.remove("hidden");
+    }
+    const answer = result.answer.startsWith("Relevant code found:") && result.sources.length
+      ? "GitContext retrieved these repository excerpts. Expand a citation to read the source text."
+      : result.answer;
+    appendMessage("assistant", answer, result.sources, result.retrieval_ms);
   } catch (error) {
     loading.remove();
     appendMessage("assistant", error.message);

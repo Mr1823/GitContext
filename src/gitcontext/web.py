@@ -86,7 +86,9 @@ def create_app() -> FastAPI:
         repository_url = _public_github_url(request.path)
         try:
             token = Settings.for_repository(Path.cwd()).github_token
-            remote, files = prepare_remote_repository(repository_url, token)
+            remote, files = prepare_remote_repository(
+                repository_url, token, public_only=True
+            )
             repository = remote.cache_path
             settings = Settings.for_repository(repository)
             indexed_chunks = (
@@ -108,8 +110,10 @@ def create_app() -> FastAPI:
     def index(request: RepositoryRequest) -> dict[str, Any]:
         repository_url = _public_github_url(request.path)
         try:
-            summary = index_remote_repository(repository_url)
-        except (OSError, RuntimeError, ValueError) as error:
+            summary = index_remote_repository(repository_url, public_only=True)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except (OSError, RuntimeError) as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
         return {
             "repository": str(summary.repository),
@@ -132,7 +136,7 @@ def create_app() -> FastAPI:
         token = Settings.for_repository(Path.cwd()).github_token
         try:
             refreshed, remote_repository = remote_repository_is_stale(
-                repository_url, token
+                repository_url, token, public_only=True
             )
             repository = remote_repository.cache_path
         except (OSError, RuntimeError, ValueError) as error:

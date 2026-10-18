@@ -22,7 +22,7 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
     )
     monkeypatch.setattr(
         "gitcontext.web.prepare_remote_repository",
-        lambda value, token=None: (remote, [repository / "auth.py"]),
+        lambda value, token=None, **kwargs: (remote, [repository / "auth.py"]),
     )
     monkeypatch.setattr(
         "gitcontext.indexer.ensure_remote_snapshot",
@@ -30,11 +30,11 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
     )
     monkeypatch.setattr(
         "gitcontext.web.index_remote_repository",
-        lambda value: indexer.index_remote_repository(value, remote=remote),
+        lambda value, **kwargs: indexer.index_remote_repository(value, remote=remote),
     )
     monkeypatch.setattr(
         "gitcontext.web.remote_repository_is_stale",
-        lambda value, token=None: indexer.remote_repository_is_stale(
+        lambda value, token=None, **kwargs: indexer.remote_repository_is_stale(
             value, token, remote=remote
         ),
     )
@@ -45,6 +45,7 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
             home = await client.get("/")
             assert home.status_code == 200
             assert "Ask a question. Get the file it came from." in home.text
+            assert 'class="brand-lockup" role="img" aria-label="GitContext"' in home.text
             assert (await client.get("/static/app.js")).status_code == 200
             scan = await client.post(
                 "/api/scan", json={"path": "https://github.com/owner/repo"}
@@ -78,21 +79,27 @@ def test_web_scan_accepts_github_url_without_local_folder(tmp_path: Path, monkey
     monkeypatch.setenv("GITCONTEXT_DATABASE", str(tmp_path / "remote.sqlite"))
     monkeypatch.setenv("GITCONTEXT_INGEST_GITHUB", "false")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    index_calls = []
     monkeypatch.setattr(
         "gitcontext.web.prepare_remote_repository",
-        lambda value, token=None: (remote, [source]),
+        lambda value, token=None, **kwargs: (remote, [source]),
     )
     monkeypatch.setattr(
         "gitcontext.indexer.ensure_remote_snapshot",
         lambda repository, token=None: repository.cache_path,
     )
+
+    def index_remote(value, **kwargs):
+        index_calls.append(value)
+        return indexer.index_remote_repository(value, remote=remote)
+
     monkeypatch.setattr(
         "gitcontext.web.index_remote_repository",
-        lambda value: indexer.index_remote_repository(value, remote=remote),
+        index_remote,
     )
     monkeypatch.setattr(
         "gitcontext.web.remote_repository_is_stale",
-        lambda value, token=None: indexer.remote_repository_is_stale(value, remote=remote),
+        lambda value, token=None, **kwargs: (True, remote),
     )
 
     async def workflow() -> None:
@@ -119,6 +126,8 @@ def test_web_scan_accepts_github_url_without_local_folder(tmp_path: Path, monkey
             )
             assert answer.status_code == 200
             assert "main.py" in answer.json()["answer"]
+            assert answer.json()["index_refreshed"] is True
+            assert index_calls == [remote.url, remote.url]
 
     asyncio.run(workflow())
 

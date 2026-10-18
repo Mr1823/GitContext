@@ -192,9 +192,11 @@ def index_repository(
 def prepare_remote_repository(
     value: str,
     token: str | None = None,
+    *,
+    public_only: bool = False,
 ) -> tuple[RemoteRepository, list[Path]]:
     """Resolve a GitHub URL and make its current supported files available to scan."""
-    remote = get_remote_repository(value, token)
+    remote = get_remote_repository(value, token, public_only=public_only)
     root = ensure_remote_snapshot(remote, token)
     return remote, scan_repository(root)
 
@@ -203,9 +205,11 @@ def remote_repository_is_stale(
     value: str,
     token: str | None = None,
     remote: RemoteRepository | None = None,
+    *,
+    public_only: bool = False,
 ) -> tuple[bool, RemoteRepository]:
     """Check whether the persisted remote index matches GitHub's latest commit."""
-    remote = remote or get_remote_repository(value, token)
+    remote = remote or get_remote_repository(value, token, public_only=public_only)
     settings = Settings.for_repository(remote.cache_path)
     store = VectorStore(settings.database_path)
     stale = (
@@ -220,10 +224,11 @@ def index_remote_repository(
     value: str,
     *,
     remote: RemoteRepository | None = None,
+    public_only: bool = False,
 ) -> IndexSummary:
     """Fetch and index a GitHub repository without a user-side Git clone."""
     token = Settings.for_repository(Path.cwd()).github_token
-    remote = remote or get_remote_repository(value, token)
+    remote = remote or get_remote_repository(value, token, public_only=public_only)
     ensure_remote_snapshot(remote, token)
     summary = index_repository(
         remote.cache_path,

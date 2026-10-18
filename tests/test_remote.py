@@ -2,11 +2,14 @@ import io
 import tarfile
 from pathlib import Path
 
+import pytest
+
 from gitcontext import indexer
 from gitcontext.config import Settings
 from gitcontext.ingest.remote import (
     RemoteRepository,
     ensure_remote_snapshot,
+    get_remote_repository,
     parse_github_url,
 )
 from gitcontext.vector_store import VectorStore
@@ -18,6 +21,29 @@ def test_parse_github_repository_urls() -> None:
     assert parse_github_url("git@github.com:Owner/repo.git") == "Owner/repo"
     assert parse_github_url("https://gitlab.com/Owner/repo") is None
     assert parse_github_url("https://github.com/Owner/repo/tree/main") is None
+
+
+def test_public_web_resolution_rejects_private_repositories(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "gitcontext.ingest.remote._github_json",
+        lambda url, token: {"private": True, "default_branch": "main"},
+    )
+
+    with pytest.raises(ValueError, match="public GitHub repositories only"):
+        get_remote_repository("https://github.com/owner/repo", public_only=True)
+
+
+def test_public_web_resolution_reports_private_or_missing_repositories(monkeypatch) -> None:
+    def missing_repository(url, token):
+        raise RuntimeError("GitHub repository was not found or is private.")
+
+    monkeypatch.setattr(
+        "gitcontext.ingest.remote._github_json",
+        missing_repository,
+    )
+
+    with pytest.raises(ValueError, match="Check the URL and repository visibility"):
+        get_remote_repository("https://github.com/owner/repo", public_only=True)
 
 
 def test_remote_snapshot_fetches_supported_files_and_reuses_same_commit(
