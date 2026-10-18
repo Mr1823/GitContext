@@ -16,7 +16,7 @@ dependencies = [
     "rank-bm25",
     "fastapi",
     "uvicorn[standard]",
-    "tree-sitter",
+    "tree-sitter<0.26",
     "tree-sitter-python",
     "tree-sitter-javascript",
     "tree-sitter-typescript",

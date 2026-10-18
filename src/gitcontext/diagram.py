@@ -16,7 +16,7 @@ from gitcontext.config import Settings
 from gitcontext.retrieval import retrieve
 from gitcontext.vector_store import VectorStore
 
-DIAGRAM_VERSION = 5
+DIAGRAM_VERSION = 6
 MAX_NODES = 25
 MIN_GROUPS = 5
 MAX_GROUPS = 8
@@ -2186,7 +2186,7 @@ def render_mermaid(
         if label:
             arrow = "-.->" if edge.get("kind") == "http" else "-->"
             lines.append(
-                f'  {edge["source"]} {arrow}|{label}| {edge["target"]}'
+                f'  {edge["source"]} {arrow}|"{label}"| {edge["target"]}'
             )
         else:
             lines.append(f'  {edge["source"]} --> {edge["target"]}')
