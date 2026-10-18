@@ -11,12 +11,22 @@ from typer.testing import CliRunner
 from gitcontext.cli import app as cli_app
 from gitcontext.config import Settings
 from gitcontext.diagram import (
+    _display_edges,
+    _display_http_edges,
+    _fallback_groups,
+    _load_diagram_extra,
+    _make_external_nodes,
     _make_nodes,
+    _merge_external_edges,
+    _refine_directory_nodes,
+    _validate_http_citations,
     _validate_labels,
     analysed_paths,
+    analyze_http,
     cache_key,
     content_digest,
     extract_imports,
+    extract_unresolved_imports,
     generate_diagram,
     render_mermaid,
     sanitize_label,
@@ -50,6 +60,345 @@ def test_extracts_only_internal_python_and_relative_js_imports() -> None:
     ]
 
 
+def test_matches_express_calls_to_routes_and_reports_unmatched_calls() -> None:
+    template = chr(96)
+    dynamic_template = "/api/products/" + "$" + "{id}"
+    contents = {
+        "server/index.js": (
+            "const express = require('express');\n"
+            "const app = express();\n"
+            "const productsRouter = require('./routes/products');\n"
+            "const ordersRouter = require('./routes/orders');\n"
+            "app.use('/api/products', productsRouter);\n"
+            "app.use('/api/orders', ordersRouter);\n"
+        ),
+        "server/routes/products.js": (
+            "const express = require('express');\n"
+            "const router = express.Router();\n"
+            "router.get('/', handler);\n"
+            "router.get('/:id', handler);\n"
+            "module.exports = router;\n"
+        ),
+        "server/routes/orders.js": (
+            "const express = require('express');\n"
+            "const router = express.Router();\n"
+            "router.post('/', handler);\n"
+            "module.exports = router;\n"
+        ),
+        "client/app.js": (
+            "import axios from 'axios';\n"
+            "axios.get('/api/products');\n"
+            + "axios.get(" + template + dynamic_template + template + ");\n"
+            + "fetch('/api/orders', { method: 'POST' });\n"
+            + "const api = axios.create({ baseURL: '/api' });\n"
+            + "api.get('/products/42');\n"
+            + "api.get('/orders/7');\n"
+            + "const endpoint = getEndpoint();\n"
+            + "axios.get(endpoint);\n"
+            + "axios.get('/api/missing');\n"
+        ),
+    }
+    result = analyze_http(contents, list(contents))
+
+    assert result["backend_detected"] == "Express"
+    assert [
+        (
+            item["method"], item["path"], item["source_file"],
+            item["target_file"], item["match"],
+            item["call_site"], item["route_site"],
+        )
+        for item in result["http_edges"]
+    ] == [
+        (
+            "GET", "/api/products", "client/app.js",
+            "server/routes/products.js", "route",
+            {"path": "client/app.js", "line": 2},
+            {"path": "server/routes/products.js", "line": 3},
+        ),
+        (
+            "GET", "/api/products/:param", "client/app.js",
+            "server/routes/products.js", "route",
+            {"path": "client/app.js", "line": 3},
+            {"path": "server/routes/products.js", "line": 4},
+        ),
+        (
+            "POST", "/api/orders", "client/app.js",
+            "server/routes/orders.js", "route",
+            {"path": "client/app.js", "line": 4},
+            {"path": "server/routes/orders.js", "line": 3},
+        ),
+        (
+            "GET", "/api/products/42", "client/app.js",
+            "server/routes/products.js", "route",
+            {"path": "client/app.js", "line": 6},
+            {"path": "server/routes/products.js", "line": 4},
+        ),
+        (
+            "GET", "/api/orders/7", "client/app.js",
+            "server/routes/orders.js", "prefix",
+            {"path": "client/app.js", "line": 7},
+            {"path": "server/index.js", "line": 6},
+        ),
+    ]
+    assert [
+        (item["call_site"], item["reason"])
+        for item in result["unmatched_calls"]
+    ] == [
+        ({"path": "client/app.js", "line": 9}, "dynamic_url"),
+        ({"path": "client/app.js", "line": 10}, "no_matching_route"),
+    ]
+
+
+def test_matches_fastapi_router_prefixes() -> None:
+    contents = {
+        "api/main.py": (
+            "from fastapi import FastAPI\n"
+            "from api.items import router as items_router\n"
+            "app = FastAPI()\n"
+            "app.include_router(items_router, prefix='/api/items')\n"
+        ),
+        "api/items.py": (
+            "from fastapi import APIRouter\n"
+            "router = APIRouter(prefix='/v1')\n"
+            "@router.get('/{item_id}')\n"
+            "def read_item(item_id: int):\n"
+            "    return item_id\n"
+        ),
+        "frontend/app.js": "fetch('/api/items/v1/11');\n",
+    }
+
+    result = analyze_http(contents, list(contents))
+
+    assert result["backend_detected"] == "FastAPI"
+    assert result["http_edges"] == [{
+        "source_file": "frontend/app.js",
+        "target_file": "api/items.py",
+        "method": "GET",
+        "path": "/api/items/v1/11",
+        "match": "route",
+        "call_site": {"path": "frontend/app.js", "line": 1},
+        "route_site": {"path": "api/items.py", "line": 3},
+        "unknown_base_prefix": False,
+    }]
+
+
+def test_resolves_fetch_wrapper_calls_without_reporting_the_wrapper_body() -> None:
+    contents = {
+        "server/web.py": (
+            "from fastapi import FastAPI\n"
+            "app = FastAPI()\n"
+            "@app.post('/api/items')\n"
+            "def create_item():\n"
+            "    return {}\n"
+        ),
+        "static/app.js": (
+            "async function api(route, payload) {\n"
+            "  const response = await fetch(route, { method: 'POST' });\n"
+            "  return response;\n"
+            "}\n"
+            "api('/api/items', {});\n"
+        ),
+    }
+
+    result = analyze_http(contents, list(contents))
+
+    assert result["http_edges"] == [{
+        "source_file": "static/app.js",
+        "target_file": "server/web.py",
+        "method": "POST",
+        "path": "/api/items",
+        "match": "route",
+        "call_site": {"path": "static/app.js", "line": 5},
+        "route_site": {"path": "server/web.py", "line": 3},
+        "unknown_base_prefix": False,
+    }]
+    assert result["unmatched_calls"] == []
+
+
+def test_follows_imported_axios_factory_returned_by_a_local_hook() -> None:
+    contents = {
+        "server/index.js": (
+            "const express = require('express');\n"
+            "const app = express();\n"
+            "const productsRouter = require('./routes/products');\n"
+            "app.use('/api/products', productsRouter);\n"
+        ),
+        "server/routes/products.js": (
+            "const express = require('express');\n"
+            "const router = express.Router();\n"
+            "router.get('/', handler);\n"
+            "module.exports = router;\n"
+        ),
+        "src/hooks/useAxiosSecure.js": (
+            "import axios from 'axios';\n"
+            "const useAxiosSecure = () => {\n"
+            "  const instance = axios.create({ baseURL: '/api' });\n"
+            "  return [instance];\n"
+            "};\n"
+            "export default useAxiosSecure;\n"
+        ),
+        "src/pages/Products.jsx": (
+            "import useAxiosSecure from '../hooks/useAxiosSecure';\n"
+            "const [axiosSecure] = useAxiosSecure();\n"
+            "axiosSecure.get('/products');\n"
+        ),
+    }
+
+    result = analyze_http(contents, list(contents))
+
+    assert len(result["http_edges"]) == 1
+    assert result["http_edges"][0]["method"] == "GET"
+    assert result["http_edges"][0]["path"] == "/api/products"
+    assert result["http_edges"][0]["call_site"] == {
+        "path": "src/pages/Products.jsx", "line": 3,
+    }
+
+
+def test_unresolved_imports_include_aliases_and_missing_barrels(tmp_path: Path) -> None:
+    contents = {
+        "src/app.js": (
+            'import { missing } from "@/missing";\n'
+            'import { button } from "./components";\n'
+        ),
+    }
+
+    unresolved = extract_unresolved_imports(
+        contents, contents, repository=tmp_path
+    )
+
+    assert [(item["line"], item["specifier"]) for item in unresolved] == [
+        (1, "@/missing"),
+        (2, "./components"),
+    ]
+
+
+def test_group_edges_merge_imports_and_http_by_group_pair() -> None:
+    nodes = _make_nodes(
+        ["frontend/app.js", "frontend/other.js", "server/routes.js"],
+        layer_by_file={
+            "frontend/app.js": "frontend",
+            "frontend/other.js": "frontend",
+            "server/routes.js": "backend",
+        },
+    )
+    groups = [
+        {"id": "g1", "name": "Browser client", "node_ids": ["n1", "n2"]},
+        {"id": "g2", "name": "Server routes", "node_ids": ["n3"]},
+    ]
+    file_edges = [
+        {"source_file": "frontend/app.js", "target_file": "server/routes.js"},
+        {"source_file": "frontend/other.js", "target_file": "server/routes.js"},
+    ]
+    http_edges = [
+        {"source_file": source, "target_file": "server/routes.js",
+         "method": "GET", "path": "/api/items"}
+        for source in ("frontend/app.js", "frontend/other.js")
+    ]
+
+    imports = _display_edges(nodes, file_edges, groups)
+    calls = _display_http_edges(nodes, http_edges, groups, len(imports) + 1)
+
+    assert len(imports) == len(calls) == 1
+    assert imports[0]["import_count"] == 2
+    assert calls[0]["api_count"] == 2
+
+
+def test_diagram_extra_rejects_unknown_endpoints_and_sanitizes_hostile_labels(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "diagram.extra.json").write_text(
+        json.dumps({
+            "nodes": [{
+                "id": "stripe", "label": 'Stripe "[]#;\n service', "kind": "service",
+            }],
+            "edges": [{
+                "from": "stripe", "to": "missing.py",
+                "label": 'calls "payments"; #\n now',
+            }],
+        }),
+        encoding="utf-8",
+    )
+    extra, _ = _load_diagram_extra(tmp_path)
+    external_nodes = _make_external_nodes(extra["nodes"], 2)
+    source_nodes = [{"id": "n1", "path": "src/app.js", "files": ["src/app.js"]}]
+    groups = [{"id": "g1", "name": "Frontend", "node_ids": ["n1"]}]
+
+    assert extra["nodes"][0]["label"] == "Stripe service"
+    assert extra["edges"][0]["label"] == "calls payments now"
+    with pytest.raises(ValueError, match="unknown node"):
+        _merge_external_edges(
+            extra["edges"], external_nodes, groups, 1, source_nodes
+        )
+
+
+def test_external_node_shapes_and_hostile_mermaid_text_pass_template_validation(
+    tmp_path: Path,
+) -> None:
+    source_nodes = _make_nodes(["src/checkout.py"])
+    definitions = [
+        {"key": "browser", "label": 'Browser "[]#;\n actor', "kind": "actor"},
+        {"key": "stripe", "label": "Stripe", "kind": "service"},
+        {"key": "mongodb", "label": "MongoDB", "kind": "database"},
+    ]
+    external_nodes = _make_external_nodes(definitions, 2)
+    groups = [{"id": "g1", "name": "Checkout", "node_ids": ["n1"]}]
+    extra_edges = [
+        {"from": "src/checkout.py", "to": key, "label": "connects system"}
+        for key in ("browser", "stripe", "mongodb")
+    ]
+    edges = _merge_external_edges(
+        extra_edges, external_nodes, groups, 1, source_nodes
+    )
+    labels = {
+        "n1": {"phrase": "checkout.py", "fallback": True},
+        **{
+            node["id"]: {"phrase": node["label"]}
+            for node in external_nodes
+        },
+        **{
+            edge["id"]: {"phrase": edge["label"]}
+            for edge in edges
+        },
+    }
+    mermaid = render_mermaid(
+        source_nodes + external_nodes, edges, groups, labels
+    )
+
+    validate_mermaid(mermaid, source_nodes + external_nodes, groups, edges)
+    assert "n2((Browser actor))" in mermaid
+    assert "n3([Stripe])" in mermaid
+    assert "n4[(MongoDB)]" in mermaid
+    assert not re.search(r"[#;]", mermaid)
+    assert 'Browser "[]' not in mermaid
+
+
+def test_http_citations_must_reference_real_source_lines() -> None:
+    edge = {
+        "source_file": "client/app.js",
+        "target_file": "server/routes.js",
+        "call_site": {"path": "client/app.js", "line": 4},
+        "route_site": {"path": "server/routes.js", "line": 1},
+    }
+
+    with pytest.raises(ValueError, match="invalid indexed citation"):
+        _validate_http_citations(
+            [edge],
+            {"client/app.js", "server/routes.js"},
+            {"client/app.js": "fetch('/api');", "server/routes.js": "router.get('/')"},
+        )
+
+
+def test_cache_key_changes_when_diagram_version_changes(monkeypatch) -> None:
+    import gitcontext.diagram as diagram_module
+
+    first = cache_key("repo", "commit", "digest")
+    monkeypatch.setattr(
+        diagram_module, "DIAGRAM_VERSION", diagram_module.DIAGRAM_VERSION + 1
+    )
+
+    assert cache_key("repo", "commit", "digest") != first
+
+
 def test_diagram_excludes_tests_by_default_and_collapses_largest_folder_first() -> None:
     paths = [f"src/core/file_{index}.py" for index in range(12)]
     paths += [f"src/util/file_{index}.py" for index in range(10)]
@@ -68,6 +417,51 @@ def test_diagram_excludes_tests_by_default_and_collapses_largest_folder_first() 
     assert collapsed[0]["path"] == "src/core"
     assert len(collapsed[0]["files"]) == 12
     assert sum(len(node["files"]) == 1 for node in nodes) == 18
+
+
+def test_directory_refinement_uses_spare_slots_for_largest_subfolders() -> None:
+    files = [f"src/pages/page_{index}.jsx" for index in range(8)]
+    files += [f"src/components/component_{index}.jsx" for index in range(5)]
+    files += [f"src/hooks/hook_{index}.jsx" for index in range(4)]
+    files += ["src/App.jsx", "src/main.jsx"]
+    nodes = [{"id": "n1", "kind": "source", "path": "src", "files": files}]
+
+    refined = _refine_directory_nodes(nodes, max_nodes=4)
+
+    assert len(refined) == 4
+    assert {path for node in refined for path in node["files"]} == set(files)
+    assert {node["path"] for node in refined} >= {
+        "src/pages", "src/components", "src/hooks",
+    }
+
+
+def test_fallback_groups_merge_singletons_and_avoid_single_node_wrappers() -> None:
+    paths = [f"server/routes/route_{index}.js" for index in range(5)]
+    paths += [f"src/pages/page_{index}.jsx" for index in range(4)]
+    paths += ["shared/helpers.js", "utils/format.js", "entry.js", "main.js"]
+    nodes = _make_nodes(paths)
+    layers = {
+        path: (
+            "backend" if path.startswith("server/") else
+            "frontend" if path.startswith("src/") else "shared"
+        )
+        for path in paths
+    }
+
+    groups = _fallback_groups(nodes, layers)
+
+    assert 5 <= len(groups) <= 8
+    assert all(len(group["node_ids"]) >= 2 for group in groups)
+    node_layers = {
+        node["id"]: {layers[path] for path in node["files"]}
+        for node in nodes
+    }
+    assert all(
+        not {"frontend", "backend"}.issubset(
+            set().union(*(node_layers[node_id] for node_id in group["node_ids"]))
+        )
+        for group in groups
+    )
 
 
 def test_nodes_include_isolated_python_and_typescript_files() -> None:
@@ -180,8 +574,11 @@ def _indexed_store(repository: Path, settings: Settings) -> VectorStore:
 
 def _fake_llm(prompt: str, settings: Settings) -> str:
     del settings
-    if "Candidate groups:" in prompt:
-        candidates = json.loads(prompt.split("Candidate groups: ", 1)[1].split("\nNode files:", 1)[0])
+    if "Purpose-based starting groups:" in prompt:
+        candidates = json.loads(
+            prompt.split("Purpose-based starting groups: ", 1)[1]
+            .split("\nNode files:", 1)[0]
+        )
         node_ids = [node_id for group in candidates for node_id in group["node_ids"]]
         return json.dumps({"groups": [{"name": "Source files", "node_ids": node_ids}]})
     items = json.loads(prompt.split("Items and evidence: ", 1)[1])
@@ -189,7 +586,7 @@ def _fake_llm(prompt: str, settings: Settings) -> str:
     for item in items:
         evidence = item["evidence"][0]
         if item["kind"] == "edge":
-            phrase = "imports auth"
+            phrase = "reads auth"
         elif item["files"][0].endswith("main.py"):
             phrase = "starts main flow"
         else:
@@ -233,7 +630,7 @@ def test_cache_hit_uses_zero_llm_calls(tmp_path: Path, monkeypatch) -> None:
     assert second["cache_hit"] is True
     assert second["llm_calls_made"] == 0
     assert len(calls) == 2
-    assert second["mermaid"].startswith("flowchart LR\n")
+    assert second["mermaid"].startswith("flowchart TB\n")
 
 
 def test_invalid_json_retries_once_with_the_validation_error(
@@ -361,7 +758,7 @@ def test_cli_diagram_writes_json_and_mermaid_from_existing_index(
     assert result.exit_code == 0, result.output
     payload = json.loads((output / "diagram.json").read_text(encoding="utf-8"))
     assert payload["labels_status"] == "fallback (no LLM key)"
-    assert (output / "diagram.mmd").read_text(encoding="utf-8").startswith("flowchart LR\n")
+    assert (output / "diagram.mmd").read_text(encoding="utf-8").startswith("flowchart TB\n")
     assert "Nodes" in result.output and "Edges" in result.output
 
 

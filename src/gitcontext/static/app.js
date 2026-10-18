@@ -11,6 +11,7 @@ let activeRepository = "";
 let indexed = false;
 let mermaidPromise;
 let diagramRenderNumber = 0;
+let currentDiagramSource = "";
 
 const storedPath = sessionStorage.getItem("gitcontext.repository");
 if (storedPath && githubUrlPattern.test(storedPath)) repoInput.value = storedPath;
@@ -50,8 +51,10 @@ function updateDiagramAvailability() {
 function resetDiagram() {
   byId("diagram-output").replaceChildren();
   byId("diagram-output").classList.add("hidden");
+  byId("diagram-downloads").classList.add("hidden");
   byId("diagram-sources").classList.add("hidden");
   byId("diagram-source-list").replaceChildren();
+  currentDiagramSource = "";
   byId("diagram-status").textContent = "Build the search index to generate a diagram.";
   updateDiagramAvailability();
 }
@@ -105,6 +108,115 @@ function renderDiagramSources(citations) {
   byId("diagram-sources").classList.toggle("hidden", list.childElementCount === 0);
 }
 
+function diagramFileName(extension) {
+  const repositoryName = activeRepository.split("/").filter(Boolean).pop() || "repository";
+  const safeName = repositoryName
+    .replace(/\.git$/i, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "") || "repository";
+  return `${safeName}-architecture.${extension}`;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function diagramSvgForExport() {
+  const source = byId("diagram-output").querySelector("svg");
+  if (!source || !currentDiagramSource) return null;
+  const svg = source.cloneNode(true);
+  const viewBox = svg.viewBox.baseVal;
+  const width = viewBox.width || source.getBoundingClientRect().width;
+  const height = viewBox.height || source.getBoundingClientRect().height;
+  if (!width || !height) throw new Error("The diagram has no exportable size.");
+
+  svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  svg.setAttribute("width", String(Math.ceil(width)));
+  svg.setAttribute("height", String(Math.ceil(height)));
+  const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  background.setAttribute("x", String(viewBox.x || 0));
+  background.setAttribute("y", String(viewBox.y || 0));
+  background.setAttribute("width", String(width));
+  background.setAttribute("height", String(height));
+  background.setAttribute("fill", "#111410");
+  svg.insertBefore(background, svg.firstChild);
+  return { svg, width: Math.ceil(width), height: Math.ceil(height) };
+}
+
+async function downloadDiagram(format) {
+  try {
+    if (format === "mermaid") {
+      downloadBlob(new Blob([currentDiagramSource], { type: "text/plain;charset=utf-8" }), diagramFileName("mmd"));
+      return;
+    }
+    const diagram = diagramSvgForExport();
+    if (!diagram) return;
+    if (format === "svg") {
+      const content = new XMLSerializer().serializeToString(diagram.svg);
+      downloadBlob(new Blob([content], { type: "image/svg+xml;charset=utf-8" }), diagramFileName("svg"));
+      return;
+    }
+
+    const svgBlob = new Blob([new XMLSerializer().serializeToString(diagram.svg)], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const scale = 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = diagram.width * scale;
+      canvas.height = diagram.height * scale;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("This browser cannot export the diagram image.");
+      if (format === "jpeg") {
+        context.fillStyle = "#111410";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => result ? resolve(result) : reject(new Error("Could not create the diagram image.")), `image/${format}`, 0.92);
+      });
+      downloadBlob(blob, diagramFileName(format === "jpeg" ? "jpg" : "png"));
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch (error) {
+    byId("diagram-status").textContent = error.message || "Could not export the diagram.";
+  }
+}
+
+async function copyDiagramMermaid() {
+  if (!currentDiagramSource) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(currentDiagramSource);
+    } else {
+      const input = document.createElement("textarea");
+      input.value = currentDiagramSource;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.append(input);
+      input.select();
+      const copied = document.execCommand("copy");
+      input.remove();
+      if (!copied) throw new Error("Clipboard access is unavailable in this browser.");
+    }
+    byId("diagram-status").textContent = "Mermaid source copied to the clipboard.";
+  } catch (error) {
+    byId("diagram-status").textContent = error.message || "Could not copy Mermaid source.";
+  }
+}
+
 async function generateDiagram() {
   if (!activeRepository || !indexed) return;
   const button = byId("diagram-button");
@@ -142,6 +254,8 @@ async function generateDiagram() {
     const output = byId("diagram-output");
     output.replaceChildren(safeSvg(rendered.svg));
     output.classList.remove("hidden");
+    currentDiagramSource = result.mermaid;
+    byId("diagram-downloads").classList.remove("hidden");
     renderDiagramSources(Array.isArray(result.citations) ? result.citations : []);
     const nodeCount = Array.isArray(result.nodes) ? result.nodes.length : 0;
     const edgeCount = Array.isArray(result.edges) ? result.edges.length : 0;
@@ -293,6 +407,11 @@ byId("index-button").addEventListener("click", async () => {
 });
 
 byId("diagram-button").addEventListener("click", generateDiagram);
+byId("download-diagram-png").addEventListener("click", () => downloadDiagram("png"));
+byId("download-diagram-jpeg").addEventListener("click", () => downloadDiagram("jpeg"));
+byId("download-diagram-svg").addEventListener("click", () => downloadDiagram("svg"));
+byId("download-diagram-mermaid").addEventListener("click", () => downloadDiagram("mermaid"));
+byId("copy-diagram-mermaid").addEventListener("click", copyDiagramMermaid);
 
 byId("file-filter").addEventListener("input", (event) => {
   const filter = event.target.value.toLowerCase();

@@ -56,6 +56,43 @@ existing remote index and returns `409` when one is missing. It does not fetch,
 scan, or rebuild the repository. The generated diagram is cached in the index
 settings table.
 
+The diagram represents source files as nodes. It collapses same-folder files
+when needed to stay under the 25-node cap, then uses any spare slots to show
+the largest top-level folder's busiest subfolders. With an LLM key, it can
+merge and name groups and label import edges. Without a key, groups start from
+top-level folders and visible file or folder nodes use their names.
+Frontend HTTP calls are matched to statically declared Express and FastAPI
+routes when the method and normalized path agree. Dynamic calls and local imports
+that cannot be resolved appear in the CLI summary and diagram.json. Import and
+HTTP arrows are merged by group pair while the per-file edges remain in JSON.
+The Mermaid output uses a top-to-bottom flow with left-to-right contents inside
+each group. Its validator checks the generated template; it does not confirm that
+a Mermaid renderer can draw the text.
+
+An optional diagram.extra.json in the repository root can describe external
+systems and their connections. Endpoints can refer to an extra node id or a
+source node path:
+
+```json
+{
+  "nodes": [
+    {"id": "browser", "label": "Browser", "kind": "actor"},
+    {"id": "stripe", "label": "Stripe", "kind": "service"},
+    {"id": "mongodb", "label": "MongoDB", "kind": "database"}
+  ],
+  "edges": [
+    {"from": "src/app.js", "to": "browser", "label": "renders interface"},
+    {"from": "stripe", "to": "server/routes/payment.js", "label": "processes payments"}
+  ]
+}
+```
+
+Replace the example source paths with files in the repository being indexed.
+
+gitcontext diagram reports the generated node, group, and edge counts, plus
+unmatched HTTP calls, unresolved imports, backend detection, and the layout's
+row and column counts. It writes the Mermaid source to diagram.mmd.
+
 The web UI accepts public GitHub repository URLs only. Local folder paths remain
 available through the CLI. The `GITCONTEXT_REMOTE_CACHE` environment variable
 can change where fetched repository snapshots are cached.

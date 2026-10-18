@@ -9,8 +9,8 @@
     <meta property="og:description" content="Paste a public GitHub repository URL. GitContext indexes its code and history, then answers with citations you can check." />
     <meta property="og:type" content="website" />
     <title>GitContext - Repository Q&amp;A</title>
-    <link rel="stylesheet" href="/static/app.css?v=8" />
-    <script src="/static/app.js?v=7" defer></script>
+    <link rel="stylesheet" href="/static/app.css?v=11" />
+    <script src="/static/app.js?v=10" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -72,7 +72,16 @@
                   <h2 id="diagram-title">Architecture diagram</h2>
                   <p>Import relationships from the current index.</p>
                 </div>
-                <button class="button button-primary" id="diagram-button" type="button" disabled><span>Generate diagram</span></button>
+                <div class="diagram-controls">
+                  <button class="button button-primary" id="diagram-button" type="button" disabled><span>Generate diagram</span></button>
+                  <div class="diagram-downloads hidden" id="diagram-downloads" role="group" aria-label="Download architecture diagram">
+                    <button class="button button-secondary" id="download-diagram-png" type="button">Download PNG</button>
+                    <button class="button button-secondary" id="download-diagram-jpeg" type="button">Download JPEG</button>
+                    <button class="button button-secondary" id="download-diagram-svg" type="button">Download SVG</button>
+                    <button class="button button-secondary" id="download-diagram-mermaid" type="button">Download Mermaid</button>
+                    <button class="button button-secondary" id="copy-diagram-mermaid" type="button">Copy Mermaid</button>
+                  </div>
+                </div>
               </div>
               <p id="diagram-status" class="diagram-status" aria-live="polite">Build the search index to generate a diagram.</p>
               <div id="diagram-output" class="diagram-output hidden" role="region" aria-label="Repository architecture diagram" tabindex="0"></div>

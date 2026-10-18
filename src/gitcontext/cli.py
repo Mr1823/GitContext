@@ -233,6 +233,17 @@ def diagram(
     table.add_column("Result", style="green")
     table.add_row("Nodes", str(len(result["nodes"])))
     table.add_row("Edges", str(len(result["edges"])))
+    table.add_row("Groups", f'{len(result["groups"])} ({result["groups_status"]})')
+    table.add_row("Backend detected", result["backend_detected"])
+    table.add_row("HTTP calls matched", str(result["http_edge_count"]))
+    table.add_row("Unmatched calls", str(result["unmatched_calls_count"]))
+    table.add_row("Unresolved imports", str(result["unresolved_import_count"]))
+    table.add_row(
+        "Layout",
+        f'{result["layout"]["rows"]} rows x {result["layout"]["columns"]} columns',
+    )
+    if result.get("http_routes_note"):
+        table.add_row("Backend routes", result["http_routes_note"])
     table.add_row("LLM calls", str(result["llm_calls_made"]))
     table.add_row(
         "LLM retries", str(sum(item["type"] == "retry" for item in run_diagnostics))
@@ -254,6 +265,21 @@ def diagram(
     )
     table.add_row("Output", str(out))
     console.print(table)
+    if result["unmatched_calls_first_10"]:
+        console.print("\n[bold]Unmatched HTTP calls (first 10)[/bold]")
+        for item in result["unmatched_calls_first_10"]:
+            site = item["call_site"]
+            detail = item.get("path") or item.get("expression", "dynamic URL")
+            console.print(
+                f'  {site["path"]}:{site["line"]} {item["method"]} '
+                f'{detail} ({item["reason"]})'
+            )
+    if result["unresolved_imports_first_10"]:
+        console.print("\n[bold]Unresolved local imports (first 10)[/bold]")
+        for item in result["unresolved_imports_first_10"]:
+            console.print(
+                f'  {item["source_file"]}:{item["line"]} {item["specifier"]}'
+            )
 
 
 @app.command()
