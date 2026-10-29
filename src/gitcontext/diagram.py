@@ -16,9 +16,9 @@ from gitcontext.config import Settings
 from gitcontext.retrieval import retrieve
 from gitcontext.vector_store import VectorStore
 
-DIAGRAM_VERSION = 6
+DIAGRAM_VERSION = 10
 MAX_NODES = 25
-MIN_GROUPS = 5
+MIN_GROUPS = 3
 MAX_GROUPS = 8
 LABEL_BATCH_SIZE = 10
 SOURCE_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx"}
@@ -319,8 +319,12 @@ def _python_module_names(path: str) -> set[str]:
     if not parts:
         return set()
     names = {".".join(parts)}
-    if parts[0] == "src" and len(parts) > 1:
-        names.add(".".join(parts[1:]))
+    # Repositories commonly place an import root under `src/` or `backend/`
+    # while importing modules as though that directory were on PYTHONPATH.
+    aliases = list(parts)
+    while len(aliases) > 1 and aliases[0] in {"src", "backend"}:
+        aliases = aliases[1:]
+        names.add(".".join(aliases))
     return names
 
 
@@ -1559,8 +1563,20 @@ def _common_parent(paths: Iterable[str]) -> str:
 
 def _node_display_name(node: dict[str, Any]) -> str:
     if len(node["files"]) == 1:
-        return PurePosixPath(node["files"][0]).name
-    return (PurePosixPath(node["path"]).name or "repository") + "/"
+        return node["files"][0]
+    return f'{node["path"]} ({len(node["files"])} files)'
+
+
+def _fallback_node_display(node: dict[str, Any]) -> str:
+    if len(node["files"]) > 1:
+        return f'{len(node["files"])} files · {node["path"]}'
+    path = node["files"][0]
+    filename = PurePosixPath(path).name
+    if filename == "__init__.py":
+        role = "Package initializer"
+    else:
+        role = _filename_words(PurePosixPath(filename).stem) or filename
+    return f"{role} · {path}"
 
 
 def _candidate_groups(
@@ -1584,9 +1600,12 @@ def _name_groups(
         node["id"]: _node_layer(node, layer_by_file) for node in nodes
     }
     prompt = (
-        "Group source modules by purpose, starting from these folders. "
+        "Group source modules by their real responsibility, starting from these folders. "
         "Never put frontend and backend files in the same group. "
-        "Return 5 to 8 groups when there are at least 10 nodes. Avoid groups containing only one node. "
+        "Use concise names such as API and application, repository ingestion, or data storage. "
+        "Do not repeat path words in the group name, and do not invent core/support splits. "
+        "Return 3 to 8 groups when there are at least 10 nodes, using fewer when that better matches the code. "
+        "Avoid groups containing only one node. "
         "Do not add, remove, or rename node ids. Return JSON only as "
         '{"groups":[{"name":"...","node_ids":["n1"]}]}. '
         f"Purpose-based starting groups: {json.dumps(candidates, ensure_ascii=False)}\n"
@@ -1659,154 +1678,107 @@ def _fallback_groups(
 ) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for node in nodes:
-        parts = PurePosixPath(node["files"][0]).parts
-        folder_name = parts[0] if len(parts) > 1 else "repository root"
         layer = _node_layer(node, layer_by_file)
-        grouped[(layer, folder_name)].append(node)
-    named_groups = {
-        name if layer == "shared" else f"{name} {layer}": list(values)
-        for (layer, name), values in sorted(grouped.items())
-    }
-    group_layers = {
-        name if layer == "shared" else f"{name} {layer}": layer
-        for layer, name in grouped
-    }
-    for name in sorted(named_groups):
-        if name not in named_groups or len(named_groups[name]) != 1:
-            continue
-        layer = group_layers[name]
-        targets = [
-            target for target in named_groups
-            if target != name and group_layers[target] == layer
-            and len(named_groups[target]) > 1
+        purpose = _purpose_for_node(node)
+        grouped[(layer, purpose)].append(node)
+
+    # Fold one-node categories into the nearest same-layer responsibility.
+    # This avoids drawing a group around a single file just to meet a target count.
+    while len(grouped) > 1:
+        singletons = [key for key, items in grouped.items() if len(items) == 1]
+        if not singletons:
+            break
+        source = min(singletons, key=lambda key: (key[0], key[1]))
+        candidates = [
+            key for key in grouped if key != source and key[0] == source[0]
         ]
-        if not targets:
-            continue
+        if not candidates:
+            candidates = [key for key in grouped if key != source]
+        if not candidates:
+            break
         target = max(
-            targets,
-            key=lambda item: (
-                _shared_path_prefix(named_groups[name], named_groups[item]),
-                len(named_groups[item]), item,
+            candidates,
+            key=lambda key: (
+                _shared_path_prefix(grouped[source], grouped[key]),
+                len(grouped[key]), key[0] == source[0], key[1],
             ),
         )
-        named_groups[target].extend(named_groups.pop(name))
-        group_layers.pop(name)
+        grouped[target].extend(grouped.pop(source))
 
-    if len(nodes) >= 10:
-        while len(named_groups) < MIN_GROUPS:
-            eligible = [
-                name for name, items in named_groups.items() if len(items) >= 4
-            ]
-            if not eligible or len(named_groups) >= MAX_GROUPS:
-                break
-            name = max(eligible, key=lambda item: (len(named_groups[item]), item))
-            ordered = sorted(named_groups.pop(name), key=lambda node: node["files"])
-            middle = len(ordered) // 2
-            core, support = f"{name} core", f"{name} support"
-            named_groups[core], named_groups[support] = ordered[:middle], ordered[middle:]
-            group_layers[core] = group_layers.pop(name)
-            group_layers[support] = group_layers[core]
-
+    # Keep the diagram readable without manufacturing "core/support" splits.
+    while len(grouped) > MAX_GROUPS:
+        source = min(grouped, key=lambda key: (len(grouped[key]), key[0], key[1]))
+        candidates = [
+            key for key in grouped if key != source and key[0] == source[0]
+        ] or [key for key in grouped if key != source]
+        target = max(
+            candidates,
+            key=lambda key: (
+                _shared_path_prefix(grouped[source], grouped[key]),
+                len(grouped[key]), key[0] == source[0], key[1],
+            ),
+        )
+        grouped[target].extend(grouped.pop(source))
     return [
-        {"name": name, "node_ids": sorted(node["id"] for node in values)}
-        for name, values in sorted(named_groups.items())
+        {
+            "name": _group_display_name(layer, purpose),
+            "node_ids": sorted(node["id"] for node in values),
+        }
+        for (layer, purpose), values in sorted(grouped.items())
     ]
 
 
-def _merge_smallest_group(grouped: dict[str, list[dict[str, Any]]]) -> str:
-    smallest = min(grouped, key=lambda name: (len(grouped[name]), name))
-    return _merge_group(grouped, smallest)
+def _purpose_for_node(node: dict[str, Any]) -> str:
+    purposes = Counter(_purpose_for_path(path) for path in node["files"])
+    return min(purposes, key=lambda purpose: (-purposes[purpose], purpose))
 
 
-def _merge_group(
-    grouped: dict[str, list[dict[str, Any]]], smallest: str,
-    exclude: set[str] | None = None,
-) -> str:
-    choices = [name for name in grouped if name != smallest and name not in (exclude or set())]
-    if not choices:
-        choices = [name for name in grouped if name != smallest]
-    target = max(
-        choices,
-        key=lambda name: (
-            _shared_path_prefix(grouped[smallest], grouped[name]),
-            len(grouped[name]), name,
-        ),
-    )
-    grouped[target].extend(grouped.pop(smallest))
-    return target
-
-
-def _split_largest_group(grouped: dict[str, list[dict[str, Any]]]) -> None:
-    eligible = [name for name, items in grouped.items() if len(items) >= 4]
-    if not eligible:
-        raise ValueError("Cannot make 5 to 8 purpose groups without singleton groups.")
-    name = max(eligible, key=lambda item: (len(grouped[item]), item))
-    ordered = sorted(grouped.pop(name), key=lambda node: node["files"])
-    middle = len(ordered) // 2
-    grouped[f"{name} core"] = ordered[:middle]
-    grouped[f"{name} support"] = ordered[middle:]
-
-
-def _increase_group_count(grouped: dict[str, list[dict[str, Any]]]) -> None:
-    if any(len(items) >= 4 for items in grouped.values()):
-        _split_largest_group(grouped)
-        return
-    triples = sorted(name for name, items in grouped.items() if len(items) == 3)
-    if len(triples) < 2:
-        raise ValueError("Cannot reach 5 purpose groups without single-node wrappers.")
-    selected = triples[:2]
-    singletons = []
-    for name in selected:
-        ordered = sorted(grouped.pop(name), key=lambda node: node["files"])
-        grouped[f"{name} core"] = ordered[:2]
-        singletons.extend(ordered[2:])
-    shared_name = "Shared modules"
-    suffix = 2
-    while shared_name in grouped:
-        shared_name = f"Shared modules {suffix}"
-        suffix += 1
-    grouped[shared_name] = singletons
+def _group_display_name(layer: str, purpose: str) -> str:
+    if layer == "shared":
+        return purpose
+    return f"{layer.title()} · {purpose}"
 
 
 def _purpose_for_path(path: str) -> str:
     parts = [part.lower() for part in PurePosixPath(path).parts]
+    directories = parts[:-1]
     filename = PurePosixPath(path).stem.lower()
-    joined = "/".join(parts)
-    if "gitcontext" in parts:
-        if "ingest" in parts or filename in {"chunking", "parser", "history", "github", "remote", "repository"}:
-            return "Repository ingestion"
-        if filename in {"cli", "web", "app"} or "static" in parts:
-            return "User interfaces"
-        if filename in {"answer", "evaluation"}:
-            return "Answer and evaluation"
-        if filename in {"retrieval", "embeddings"}:
-            return "Search and embeddings"
-        return "Index and storage"
-    if "server" in parts:
-        if "models" in parts or "db" in parts or filename in {"database", "connect"}:
-            return "Data models and storage"
-        if "routes" in parts or "api" in parts:
-            return "Backend API"
-        return "Server support"
-    if "pages" in parts:
-        return "Pages and workflows"
-    if "components" in parts:
-        return "Interface components"
-    if "hooks" in parts:
-        return "Application hooks"
-    if "context" in parts or "providers" in parts or any(
-        token in filename for token in ("auth", "route", "login")
-    ):
-        return "Authentication and state"
-    if "layouts" in parts or "routes" in parts:
-        return "Application structure"
-    if "utils" in parts or "shared" in parts:
-        return "Shared application logic"
-    if filename in {"index", "app", "main"}:
+    if filename == "__init__":
+        filename = ""
+    tokens = set(directories + [filename])
+    if tokens.intersection({"auth", "authentication", "session", "security", "login", "users"}):
+        return "Authentication and identity"
+    if "graph" in tokens:
+        return "Code graph construction"
+    if "chat" in tokens or "messages" in tokens:
+        return "Conversation handling"
+    if tokens.intersection({"ingest", "ingestion", "reader", "parser", "chunk", "chunking", "scanner", "history"}):
+        return "Repository ingestion"
+    if tokens.intersection({"retrieval", "search", "ranking", "reranker", "embeddings", "embedder"}):
+        return "Search and retrieval"
+    if tokens.intersection({"llm", "provider", "providers", "answer", "generation", "prompt"}):
+        return "Model and answer services"
+    if tokens.intersection({"db", "database", "models", "model", "vector", "vectors", "store", "storage", "repos", "repositories"}):
+        return "Data access and storage"
+    if tokens.intersection({"routes", "route", "api", "endpoint", "endpoints", "controller", "controllers", "server"}):
+        return "API and application"
+    if tokens.intersection({"pages", "page", "components", "component", "hooks", "hook", "frontend", "client", "ui", "static"}):
+        return "User interface"
+    if tokens.intersection({"config", "configuration", "logging", "logger", "utils", "utilities", "shared", "common", "deps"}):
+        return "Runtime support"
+    if filename in {"index", "app", "main", "__init__"}:
         return "Application entry points"
-    if "test" in joined or "spec" in filename:
-        return "Test support"
-    return "Shared application logic"
+    if "core" in tokens:
+        return "Core services"
+    if "support" in tokens:
+        return "Support services"
+    meaningful = [
+        part for part in directories
+        if part not in {"src", "lib", "app", "backend", "frontend", "server", "client", "core", "support"}
+    ]
+    if meaningful:
+        return f"{meaningful[-1].replace('_', ' ').title()} modules"
+    return "Application services"
 
 
 def _shared_path_prefix(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> int:
@@ -2016,7 +1988,7 @@ def _fallback_labels(
             node = node_by_id[task["id"]]
             path = node["files"][0] if node["files"] else node["path"]
             if len(node["files"]) > 1:
-                phrase = _node_display_name(node).rstrip("/") + "/"
+                phrase = f"Folder containing {len(node['files'])} files"
             else:
                 phrase = PurePosixPath(path).name
             evidence = task["evidence"]
@@ -2158,9 +2130,9 @@ def render_mermaid(
             node = node_by_id[node_id]
             filename = sanitize_label(_node_display_name(node))
             display = (
-                sanitize_label(label["phrase"])
+                sanitize_label(_fallback_node_display(node))
                 if label.get("fallback")
-                else f'{sanitize_label(label["phrase"])} [{filename}]'
+                else f'{sanitize_label(label["phrase"])} · {filename}'
             )
             lines.append(f'    {node_id}["{display}"]')
         lines.append("  end")
@@ -2176,12 +2148,7 @@ def render_mermaid(
         lines.append(f'  {node["id"]}{shape}')
     for edge in edges:
         label = sanitize_label(labels[edge["id"]]["phrase"])
-        if edge.get("kind") == "imports":
-            label = (
-                f"{label} ({edge['import_count']} imports)"
-                if label else f"{edge['import_count']} imports"
-            )
-        elif edge.get("kind") == "http":
+        if edge.get("kind") == "http":
             label = f"{label} ({edge['api_count']} API calls)"
         if label:
             arrow = "-.->" if edge.get("kind") == "http" else "-->"
@@ -2217,9 +2184,9 @@ def _display_labels(
             node = node_by_id[label_id]
             filename = sanitize_label(_node_display_name(node))
             item["text"] = (
-                sanitize_label(item["phrase"])
+                sanitize_label(_fallback_node_display(node))
                 if item.get("fallback")
-                else f"{item['phrase']} [{filename}]".strip()
+                else f"{item['phrase']} · {filename}"
             )
             result["nodes"][label_id] = item
         elif item["kind"] == "external":

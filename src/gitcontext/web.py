@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -87,6 +87,29 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.exception_handler(404)
+    async def not_found(request: Request, error: Exception):
+        if "text/html" not in request.headers.get("accept", ""):
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        return HTMLResponse(
+            status_code=404,
+            content=(
+                '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                '<meta name="theme-color" content="#111410"><meta name="robots" content="noindex">'
+                '<title>Page not found - GitContext</title>'
+                '<style>body{margin:0;min-height:100vh;display:grid;place-items:center;'
+                'background:#111410;color:#eef1e9;font:16px/1.6 system-ui,sans-serif}'
+                'main{max-width:34rem;padding:2rem}h1{font-size:2rem;margin:0 0 .5rem}'
+                'p{color:#b6beb0}a{display:inline-flex;min-height:44px;align-items:center;'
+                'padding:0 1rem;border-radius:6px;background:#b9f279;color:#172111;'
+                'font-weight:600;text-decoration:none}a:focus-visible{outline:3px solid white;'
+                'outline-offset:3px}</style></head><body><main><h1>Page not found</h1>'
+                '<p>That GitContext page does not exist.</p>'
+                '<a href="/">Return to GitContext</a></main></body></html>'
+            ),
+        )
 
     @app.post("/api/scan", tags=["repository"])
     def scan(request: RepositoryRequest) -> dict[str, Any]:

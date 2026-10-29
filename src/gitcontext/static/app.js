@@ -16,6 +16,31 @@ let currentDiagramSource = "";
 const storedPath = sessionStorage.getItem("gitcontext.repository");
 if (storedPath && githubUrlPattern.test(storedPath)) repoInput.value = storedPath;
 
+function scrollTo(element, block = "start") {
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  element.scrollIntoView({ behavior, block });
+}
+
+document.querySelectorAll('a[data-requires-index]').forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (!activeRepository) {
+      event.preventDefault();
+      byId("index-status").textContent = "Enter a public GitHub repository URL to open this section.";
+      byId("index-status").classList.remove("hidden");
+      repoInput.focus();
+      scrollTo(byId("repository"), "center");
+      return;
+    }
+    if (link.dataset.requiresIndex === "ask" && !indexed) {
+      event.preventDefault();
+      byId("index-status").textContent = "Build the search index before asking questions.";
+      byId("index-status").classList.remove("hidden");
+      byId("index-button").focus();
+      scrollTo(byId("index-button"), "center");
+    }
+  });
+});
+
 async function api(route, payload) {
   const response = await fetch(route, {
     method: "POST",
@@ -367,7 +392,7 @@ repoForm.addEventListener("submit", async (event) => {
   try {
     const result = await api("/api/scan", { path });
     showRepository(result);
-    repoPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollTo(repoPanel);
   } catch (error) {
     setNotice(error.message);
     repoPanel.classList.add("hidden");

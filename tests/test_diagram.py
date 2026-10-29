@@ -450,7 +450,7 @@ def test_fallback_groups_merge_singletons_and_avoid_single_node_wrappers() -> No
 
     groups = _fallback_groups(nodes, layers)
 
-    assert 5 <= len(groups) <= 8
+    assert 3 <= len(groups) <= 8
     assert all(len(group["node_ids"]) >= 2 for group in groups)
     node_layers = {
         node["id"]: {layers[path] for path in node["files"]}

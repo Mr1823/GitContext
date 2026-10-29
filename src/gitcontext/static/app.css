@@ -114,3 +114,83 @@ h1{max-width:930px;font-size:var(--type-display);line-height:1.06;letter-spacing
 }
 
 .app-shell{font-size:var(--type-body)}
+
+/* UI/UX pass: keep the existing charcoal and lime palette. */
+:root{
+  --space-1:8px;
+  --space-2:16px;
+  --space-3:24px;
+  --space-4:32px;
+  --space-5:48px;
+  --space-6:64px;
+  --space-7:80px;
+  --type-caption:14px;
+  --type-body:16px;
+  --type-section:20px;
+  --content-max:1280px;
+}
+html{scroll-behavior:smooth;scroll-padding-top:96px}
+body{font-size:var(--type-body);line-height:1.55}
+.topbar{min-height:76px;height:auto;gap:24px;padding:12px max(5%,calc((100vw - 1280px)/2));}
+.brand-lockup{text-decoration:none;flex:0 0 auto}
+.skip-link{position:fixed;z-index:20;top:8px;left:8px;transform:translateY(-160%);padding:10px 14px;border-radius:6px;background:var(--accent);color:#172111;font-weight:600}
+.skip-link:focus{transform:translateY(0)}
+.primary-nav{display:flex;align-items:center;justify-content:center;gap:8px;margin-left:auto}
+.primary-nav a,.footer nav a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;color:var(--text);font-size:14px;text-decoration:none;border-radius:6px}
+.primary-nav a:hover,.footer nav a:hover{color:var(--accent);background:var(--panel-soft)}
+.header-cta{display:inline-flex;align-items:center;justify-content:center;min-height:44px;color:#172111;text-decoration:none;white-space:nowrap}
+.welcome-row{align-items:center}
+.welcome-copy .eyebrow{color:var(--accent);font:600 12px/1.4 var(--mono);letter-spacing:.14em}
+.subtitle{font-size:16px;line-height:1.65}
+.section-heading p,.diagram-heading p,.chat-header p,.files-heading p,.form-hint{font-size:14px;line-height:1.55}
+.button{font-size:14px}
+.stats-row span,.repo-path,.file-row,.message-label,.source-card summary,.progress-wrap,.diagram-status,.diagram-sources,.input-meta{font-size:14px}
+.file-search{min-height:44px;height:auto}
+.file-search input{font-size:16px}
+.file-row{min-height:48px}
+.file-type{width:24px;height:24px;font-size:11px}
+.suggestion{min-height:48px;font-size:14px}
+.message-text{font-size:16px;line-height:1.65}
+.message-label{color:var(--muted)}
+.source-card summary{min-height:44px;display:flex;align-items:center}
+.source-card pre{font-size:13px;line-height:1.65}
+.question-form textarea{font-size:16px;line-height:1.5}
+.send-button{min-width:48px;min-height:44px;height:44px;font-size:14px}
+.footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;width:min(90%,1280px);margin:40px auto 0;padding:20px 0 0;border-top:1px solid var(--border);color:var(--muted);font-size:14px}
+.footer-brand{color:var(--text);font:500 14px var(--mono);text-decoration:none}
+.footer nav{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.footer nav a{color:var(--muted)}
+[id]{scroll-margin-top:100px}
+@media(max-width:780px){
+  .topbar{display:flex;flex-wrap:wrap;min-height:0;padding:10px 16px;gap:8px 12px}
+  .brand-lockup{margin-right:auto}
+  .header-cta{padding-inline:12px}
+  .primary-nav{order:3;width:100%;justify-content:flex-start;overflow-x:auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
+  .primary-nav a{flex:0 0 auto}
+  .footer{width:auto;margin:32px 16px 0;align-items:flex-start;flex-direction:column;gap:8px}
+}
+@media(max-width:520px){
+  .topbar{padding-inline:12px}
+  .brand-lockup{font-size:20px;gap:6px}
+  .brand-symbol{width:32px;height:32px}
+  .header-cta{min-height:42px;font-size:13px}
+  .primary-nav{justify-content:space-between}
+  .primary-nav a{padding-inline:10px;font-size:14px}
+  .content-wrap{padding:32px 16px 24px}
+  .welcome-row{min-height:0;margin-bottom:32px}
+  .welcome-row h1{font-size:clamp(32px,9vw,42px);max-width:13ch}
+  .subtitle{font-size:16px;max-width:34ch}
+  .orbit-emblem{width:70px;height:62px}
+  .repo-card{padding:20px 16px}
+  .repo-form{gap:12px}
+  .path-input-wrap{min-height:48px;height:auto}
+  .button-primary{min-height:48px}
+  .chat-panel{min-height:520px}
+  .chat-body{min-height:300px}
+  .send-button{right:18px;top:18px}
+  .footer nav{width:100%;margin-left:-10px}
+}
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
+}
