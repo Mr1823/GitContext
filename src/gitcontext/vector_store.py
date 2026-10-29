@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from gitcontext.ingest.parser import ParsedBlock
+from gitcontext.records import ParsedBlock
 
 
 class VectorStore:

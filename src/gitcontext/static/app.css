@@ -226,3 +226,88 @@ body{font-size:var(--type-body);line-height:1.55}
   html{scroll-behavior:auto}
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
 }
+
+/* Adaptive navigation and single-panel workspace for compact viewports. */
+[hidden]{display:none!important}
+.menu-toggle{display:none;min-width:44px;min-height:44px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--panel);cursor:pointer}
+.menu-toggle span{display:block;width:18px;height:2px;margin:3px auto;background:var(--text);transition:transform .16s ease,opacity .16s ease}
+.menu-toggle[aria-expanded="true"] span:first-child{transform:translateY(5px) rotate(45deg)}
+.menu-toggle[aria-expanded="true"] span:nth-child(2){opacity:0}
+.menu-toggle[aria-expanded="true"] span:last-child{transform:translateY(-5px) rotate(-45deg)}
+.workspace-tabs{display:none}
+.repo-form,.repo-form-row,.path-input-wrap,.workspace-grid,.left-column,.diagram-panel,.chat-panel,.diagram-controls,.diagram-downloads{min-width:0}
+.repo-form-row .button{flex:0 0 auto}
+.path-input-wrap input{min-width:0;text-overflow:ellipsis}
+.file-row{min-width:0;align-items:flex-start}
+.file-row span:last-child{white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+.diagram-output{max-width:100%;overscroll-behavior-x:contain}
+.diagram-output svg{max-width:none}
+.message-text pre,.source-card pre{max-width:100%;overscroll-behavior-x:contain;white-space:pre;}
+.message-text,.source-card,.source-card summary,.repo-path,.diagram-status,.diagram-sources code{overflow-wrap:anywhere}
+.question-form,.chat-body,.files-panel{min-width:0}
+
+@media(max-width:780px){
+  .topbar{position:sticky;z-index:10;min-height:0;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 12px;padding:8px 16px;}
+  .brand-lockup{margin-right:auto}
+  .menu-toggle{display:block;flex:0 0 44px}
+  .primary-nav{display:none;position:absolute;top:100%;left:0;right:0;z-index:11;width:auto;margin:0;padding:8px 16px 16px;border-bottom:1px solid var(--border);background:var(--panel);box-shadow:0 14px 24px #0005;flex-direction:column;align-items:stretch;gap:4px}
+  .primary-nav.is-open{display:flex}
+  .primary-nav a{width:100%;justify-content:flex-start;padding-inline:12px}
+  .primary-nav .header-cta{justify-content:center;margin-top:4px}
+  .workspace-grid{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}
+  .workspace-tabs{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:5px;border:1px solid var(--border);border-radius:var(--radius-panel);background:var(--panel)}
+  .workspace-tabs [role="tab"]{min-width:0;min-height:44px;padding:8px 6px;border:0;border-radius:5px;background:transparent;color:var(--muted);font:600 14px/1.2 var(--sans);cursor:pointer}
+  .workspace-tabs [role="tab"][aria-selected="true"]{background:#27331f;color:var(--accent)}
+  .workspace-tabs [role="tab"]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .diagram-panel,.left-column,.chat-panel{grid-column:1;}
+  .diagram-panel{order:initial}
+  .left-column{order:initial}
+  .chat-panel{order:initial;grid-row:auto}
+  .chat-body{max-height:min(62vh,560px)}
+  .footer{padding-bottom:max(20px,env(safe-area-inset-bottom))}
+}
+@media(max-width:560px){
+  .topbar{padding-inline:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
+  .content-wrap{width:100%;padding-inline:clamp(12px,4.5vw,18px);}
+  .welcome-row{align-items:flex-start;gap:clamp(8px,3vw,16px)}
+  .welcome-copy{flex:1 1 0;min-width:0}
+  .welcome-row h1{font-size:clamp(30px,8.4vw,40px);max-width:16ch;overflow-wrap:break-word}
+  .subtitle{max-width:38ch;overflow-wrap:anywhere}
+  .orbit-emblem{width:clamp(54px,19vw,78px);height:auto;flex:0 0 clamp(54px,19vw,78px);margin-top:20px}
+  .repo-card,.repo-summary,.files-panel,.diagram-panel{padding:clamp(12px,4vw,20px)}
+  .repo-form-row{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+  .path-input-wrap{width:100%;min-height:48px;padding-inline:10px}
+  .path-input-wrap input{font-size:14px}
+  .repo-form-row .button{width:100%;white-space:normal}
+  .diagram-heading{align-items:stretch;flex-direction:column;gap:12px}
+  .diagram-controls,.diagram-downloads{width:100%;justify-content:stretch}
+  .diagram-controls>.button,.diagram-downloads>.button{flex:1 1 100%;width:100%;white-space:normal}
+  .diagram-output{max-height:62vh;padding:8px}
+  .diagram-output svg{margin-inline:0}
+  .chat-panel{min-height:min(70vh,620px)}
+  .chat-body{min-height:280px;max-height:52vh;padding:12px}
+  .message{grid-template-columns:minmax(0,1fr);gap:8px}
+  .message-citations{grid-column:1;grid-row:auto}
+  .message-text{min-width:0}
+  .question-form{padding:12px}
+  .question-form textarea{min-height:52px;padding-right:58px}
+  .send-button{right:18px;top:16px}
+  .input-meta{flex-wrap:wrap;gap:4px 12px}
+  .footer{width:auto;margin-inline:12px}
+}
+@media(max-width:360px){
+  .topbar{gap:8px;padding-block:8px}
+  .brand-lockup{font-size:19px;gap:5px}
+  .brand-symbol{width:30px;height:30px}
+  .content-wrap{padding-top:28px}
+  .welcome-row h1{font-size:clamp(28px,8.4vw,32px)}
+  .subtitle{font-size:15px}
+  .panel-header{flex-wrap:wrap}
+  .stats-row span{font-size:12px}
+  .diagram-status,.diagram-sources{font-size:12px}
+}
+@media(orientation:landscape) and (max-height:520px) and (max-width:900px){
+  .welcome-row{margin-bottom:20px}
+  .chat-body{min-height:220px;max-height:48vh}
+  .files-panel{max-height:55vh}
+}

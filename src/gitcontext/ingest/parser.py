@@ -2,31 +2,20 @@
 
 import ast
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
-
-@dataclass(frozen=True)
-class ParsedBlock:
-    path: str
-    start_line: int
-    end_line: int
-    symbol: str
-    content: str
-    source_type: str = "code"
-    commit_sha: str | None = None
-    author: str | None = None
-    last_modified: str | None = None
-    pr_number: int | None = None
-    source_url: str | None = None
+from gitcontext.records import ParsedBlock
 
 
-def parse_file(file_path: Path, repository: Path) -> list[ParsedBlock]:
+def parse_file(
+    file_path: Path, repository: Path, source: str | None = None
+) -> list[ParsedBlock]:
     """Parse declarations structurally where a Tree-sitter grammar is available."""
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return []
+    if source is None:
+        try:
+            source = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return []
 
     relative_path = file_path.relative_to(repository).as_posix()
     lines = source.splitlines()

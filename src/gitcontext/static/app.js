@@ -12,6 +12,80 @@ let indexed = false;
 let mermaidPromise;
 let diagramRenderNumber = 0;
 let currentDiagramSource = "";
+let mobileWorkspaceView = "files";
+const mobileWorkspace = window.matchMedia("(max-width: 780px)");
+const workspacePanels = {
+  files: byId("workspace-panel-files"),
+  architecture: byId("architecture"),
+  ask: byId("repository-qa"),
+};
+const workspaceTabs = [...document.querySelectorAll("[data-workspace-tab]")];
+
+function setMobileWorkspaceView(view, focusTab = false) {
+  if (!workspacePanels[view]) return;
+  mobileWorkspaceView = view;
+  for (const tab of workspaceTabs) {
+    const selected = tab.dataset.workspaceTab === view;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const [name, panel] of Object.entries(workspacePanels)) {
+    panel.hidden = mobileWorkspace.matches && name !== view;
+  }
+  if (focusTab) byId(`workspace-tab-${view}`).focus();
+}
+
+function setNavigationOpen(open, focusToggle = false) {
+  const toggle = byId("menu-toggle");
+  const nav = byId("main-navigation");
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+  nav.classList.toggle("is-open", open);
+  if (!open && focusToggle) toggle.focus();
+}
+
+setMobileWorkspaceView(mobileWorkspaceView);
+mobileWorkspace.addEventListener("change", () => {
+  setMobileWorkspaceView(mobileWorkspaceView);
+  if (!mobileWorkspace.matches) setNavigationOpen(false);
+});
+
+byId("menu-toggle").addEventListener("click", () => {
+  const isOpen = byId("menu-toggle").getAttribute("aria-expanded") === "true";
+  setNavigationOpen(!isOpen);
+});
+byId("main-navigation").addEventListener("click", (event) => {
+  const link = event.target.closest("a");
+  if (!link) return;
+  if (link.dataset.requiresIndex && activeRepository && indexed) {
+    setMobileWorkspaceView(link.dataset.requiresIndex === "diagram" ? "architecture" : "ask");
+  }
+  if (mobileWorkspace.matches) setNavigationOpen(false);
+});
+document.addEventListener("click", (event) => {
+  if (byId("menu-toggle").getAttribute("aria-expanded") !== "true") return;
+  if (!byId("main-navigation").contains(event.target) && !byId("menu-toggle").contains(event.target)) {
+    setNavigationOpen(false);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && byId("menu-toggle").getAttribute("aria-expanded") === "true") {
+    setNavigationOpen(false, true);
+  }
+});
+for (const [index, tab] of workspaceTabs.entries()) {
+  tab.addEventListener("click", () => setMobileWorkspaceView(tab.dataset.workspaceTab));
+  tab.addEventListener("keydown", (event) => {
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % workspaceTabs.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index + workspaceTabs.length - 1) % workspaceTabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = workspaceTabs.length - 1;
+    else return;
+    event.preventDefault();
+    setMobileWorkspaceView(workspaceTabs[nextIndex].dataset.workspaceTab, true);
+  });
+}
 
 function scrollTo(element, block = "start") {
   const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";

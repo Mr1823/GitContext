@@ -106,6 +106,38 @@ def test_indexing_only_rebuilds_changed_and_removed_files(tmp_path: Path, monkey
     assert not repository_is_stale(repository)
 
 
+def test_indexing_read_failure_does_not_report_success_or_change_existing_index(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    source = repository / "main.py"
+    source.write_text("def run_app():\n    return True\n")
+    monkeypatch.setenv("GITCONTEXT_DATABASE", str(tmp_path / "index.sqlite"))
+    index_repository(repository)
+    store = VectorStore(tmp_path / "index.sqlite")
+    previous_chunks = store.all()
+
+    unreadable = source
+    original_read_bytes = Path.read_bytes
+
+    def fail_for_unreadable_file(path: Path) -> bytes:
+        if path == unreadable:
+            raise PermissionError("read denied")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_for_unreadable_file)
+
+    try:
+        index_repository(repository)
+    except OSError as error:
+        assert "Could not read repository file: main.py" in str(error)
+    else:
+        raise AssertionError("Indexing must fail when a supported file cannot be read")
+
+    assert store.all() == previous_chunks
+
+
 def test_large_block_is_split_with_line_overlap(tmp_path: Path) -> None:
     source = tmp_path / "long.js"
     source.write_text("\n".join(f"line_{i}" for i in range(120)))

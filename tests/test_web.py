@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 
 from gitcontext import indexer
+from gitcontext.ingest.errors import GitHubAPIError
 from gitcontext.ingest.remote import RemoteRepository
 from gitcontext.web import create_app
 
@@ -47,6 +48,11 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
             assert "Understand an unfamiliar codebase." in home.text
             assert 'class="brand-lockup" href="/" aria-label="GitContext home"' in home.text
             assert 'aria-label="Main navigation"' in home.text
+            assert 'id="menu-toggle"' in home.text
+            assert 'role="tablist" aria-label="Repository workspace"' in home.text
+            assert 'data-workspace-tab="files"' in home.text
+            assert 'data-workspace-tab="architecture"' in home.text
+            assert 'data-workspace-tab="ask"' in home.text
             assert 'class="field-label" for="repository-path"' in home.text
             assert 'class="orbit-emblem" viewBox="0 0 200 130"' in home.text
             assert home.text.count('M15 14v16M22 11v21M29 14v16') == 2
@@ -178,5 +184,36 @@ def test_web_repository_routes_reject_non_github_inputs_before_access(
                 for response in await asyncio.gather(*requests):
                     assert response.status_code == 400
                     assert "https://github.com/owner/repository" in response.json()["detail"]
+
+    asyncio.run(workflow())
+
+
+def test_web_repository_upstream_failures_return_gateway_errors(monkeypatch) -> None:
+    def unavailable(*args, **kwargs):
+        raise GitHubAPIError("GitHub returned HTTP 503. private upstream details")
+
+    monkeypatch.setattr("gitcontext.web.prepare_remote_repository", unavailable)
+    monkeypatch.setattr("gitcontext.web.index_remote_repository", unavailable)
+    monkeypatch.setattr("gitcontext.web.remote_repository_is_stale", unavailable)
+
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            responses = [
+                await client.post(
+                    "/api/scan", json={"path": "https://github.com/owner/repo"}
+                ),
+                await client.post(
+                    "/api/index", json={"path": "https://github.com/owner/repo"}
+                ),
+                await client.post(
+                    "/api/ask",
+                    json={"path": "https://github.com/owner/repo", "question": "Where?"},
+                ),
+            ]
+
+        for response in responses:
+            assert response.status_code == 502
+            assert "private upstream details" not in response.text
 
     asyncio.run(workflow())

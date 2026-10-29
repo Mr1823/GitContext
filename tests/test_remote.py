@@ -6,6 +6,7 @@ import pytest
 
 from gitcontext import indexer
 from gitcontext.config import Settings
+from gitcontext.ingest.errors import GitHubAPIError
 from gitcontext.ingest.remote import (
     RemoteRepository,
     ensure_remote_snapshot,
@@ -35,7 +36,7 @@ def test_public_web_resolution_rejects_private_repositories(monkeypatch) -> None
 
 def test_public_web_resolution_reports_private_or_missing_repositories(monkeypatch) -> None:
     def missing_repository(url, token):
-        raise RuntimeError("GitHub repository was not found or is private.")
+        raise GitHubAPIError("GitHub repository was not found or is private.", 404)
 
     monkeypatch.setattr(
         "gitcontext.ingest.remote._github_json",

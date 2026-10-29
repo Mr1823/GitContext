@@ -19,13 +19,13 @@ from gitcontext.ingest.github import (
     repository_slug,
 )
 from gitcontext.ingest.history import commit_documents, file_provenance
-from gitcontext.ingest.parser import ParsedBlock
 from gitcontext.ingest.remote import (
     RemoteRepository,
     ensure_remote_snapshot,
     get_remote_repository,
 )
 from gitcontext.ingest.repository import scan_repository
+from gitcontext.records import ParsedBlock
 from gitcontext.vector_store import VectorStore
 
 
@@ -107,13 +107,17 @@ def index_repository(
         existing_paths.add(relative_path)
         try:
             content = file_path.read_bytes()
-        except OSError:
-            skipped += 1
-            continue
+            source = content.decode("utf-8")
+        except OSError as error:
+            raise OSError(f"Could not read repository file: {relative_path}") from error
+        except UnicodeError as error:
+            raise RuntimeError(
+                f"Repository file is not valid UTF-8: {relative_path}"
+            ) from error
         digest = sha256(content).hexdigest()
         if prior_hashes.get(relative_path) == digest and not model_changed:
             continue
-        chunks = chunk_file(file_path, root)
+        chunks = chunk_file(file_path, root, source=source)
         if not chunks:
             skipped += 1
         provenance = file_provenance(root, relative_path)
@@ -128,7 +132,9 @@ def index_repository(
                 file_path.stat().st_mtime, tz=UTC
             ).isoformat()
         chunks = [replace(chunk, **provenance) for chunk in chunks]
-        store.replace_file(relative_path, digest, chunks, _embed(chunks, settings.embedding_model))
+        store.replace_file(
+            relative_path, digest, chunks, _embed(chunks, settings.embedding_model)
+        )
         changed += 1
 
     removed = store.remove_missing_files(existing_paths)

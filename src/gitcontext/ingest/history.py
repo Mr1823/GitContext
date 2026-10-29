@@ -5,7 +5,7 @@ from pathlib import Path
 from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError
 
-from gitcontext.ingest.parser import ParsedBlock
+from gitcontext.records import ParsedBlock
 
 
 def file_provenance(repository: Path, relative_path: str) -> dict[str, str | None]:

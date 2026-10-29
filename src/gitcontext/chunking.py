@@ -3,7 +3,8 @@
 from dataclasses import replace
 from pathlib import Path
 
-from gitcontext.ingest.parser import ParsedBlock, parse_file
+from gitcontext.ingest.parser import parse_file
+from gitcontext.records import ParsedBlock
 
 
 def chunk_file(
@@ -11,11 +12,12 @@ def chunk_file(
     repository: Path,
     max_chars: int = 2400,
     overlap_lines: int = 8,
+    source: str | None = None,
 ) -> list[ParsedBlock]:
     """Parse a source file and split unusually large declarations safely."""
     return [
         chunk
-        for block in parse_file(file_path, repository)
+        for block in parse_file(file_path, repository, source)
         for chunk in chunk_block(block, max_chars, overlap_lines)
     ]
 

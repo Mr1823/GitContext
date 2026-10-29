@@ -23,6 +23,7 @@ from gitcontext.indexer import (
     prepare_remote_repository,
     remote_repository_is_stale,
 )
+from gitcontext.ingest.errors import GitHubAPIError
 from gitcontext.ingest.remote import _cache_root
 from gitcontext.retrieval import retrieve_with_metrics
 from gitcontext.vector_store import VectorStore
@@ -125,8 +126,14 @@ def create_app() -> FastAPI:
                 VectorStore(settings.database_path).count()
                 if settings.database_path.is_file() else 0
             )
-        except (OSError, RuntimeError, ValueError) as error:
+        except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        except GitHubAPIError as error:
+            raise HTTPException(
+                status_code=502, detail="GitHub could not complete the repository request."
+            ) from error
+        except (OSError, RuntimeError) as error:
+            raise HTTPException(status_code=500, detail="Could not scan the repository.") from error
         return {
             "repository": remote.url,
             "is_git": True,
@@ -143,8 +150,12 @@ def create_app() -> FastAPI:
             summary = index_remote_repository(repository_url, public_only=True)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        except GitHubAPIError as error:
+            raise HTTPException(
+                status_code=502, detail="GitHub could not complete the repository request."
+            ) from error
         except (OSError, RuntimeError) as error:
-            raise HTTPException(status_code=500, detail=str(error)) from error
+            raise HTTPException(status_code=500, detail="Could not build the repository index.") from error
         return {
             "repository": str(summary.repository),
             "source_files": summary.source_files,
@@ -169,8 +180,14 @@ def create_app() -> FastAPI:
                 repository_url, token, public_only=True
             )
             repository = remote_repository.cache_path
-        except (OSError, RuntimeError, ValueError) as error:
+        except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        except GitHubAPIError as error:
+            raise HTTPException(
+                status_code=502, detail="GitHub could not check or refresh this repository."
+            ) from error
+        except (OSError, RuntimeError) as error:
+            raise HTTPException(status_code=500, detail="Could not answer from this repository.") from error
         settings = Settings.for_repository(repository)
         try:
             if refreshed:

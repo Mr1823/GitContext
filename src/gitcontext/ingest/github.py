@@ -9,7 +9,8 @@ from urllib.request import Request, urlopen
 from git import Repo
 from git.exc import InvalidGitRepositoryError
 
-from gitcontext.ingest.parser import ParsedBlock
+from gitcontext.ingest.errors import GitHubAPIError
+from gitcontext.records import ParsedBlock
 
 GITHUB_RE = re.compile(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$")
 INCIDENT_LABELS = {"incident", "postmortem", "outage", "incident-report"}
@@ -149,10 +150,9 @@ def _get_json(url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
     except HTTPError as error:
         if error.code == 404:
             return []
-        detail = error.read().decode(errors="replace")[:250]
-        raise RuntimeError(f"GitHub returned HTTP {error.code}: {detail}") from error
+        raise GitHubAPIError(f"GitHub returned HTTP {error.code}.", error.code) from error
     except (URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Could not fetch GitHub discussions: {error}") from error
+        raise GitHubAPIError("Could not fetch GitHub repository discussions.") from error
     return result if isinstance(result, list) else []
 
 

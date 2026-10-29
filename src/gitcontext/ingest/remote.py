@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+from gitcontext.ingest.errors import GitHubAPIError
 from gitcontext.ingest.repository import IGNORED_DIRECTORIES, SUPPORTED_EXTENSIONS
 
 GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -81,18 +82,17 @@ def _github_json(url: str, token: str | None) -> dict | list:
         with urlopen(request, timeout=30) as response:
             result = json.loads(response.read())
     except HTTPError as error:
-        detail = error.read().decode(errors="replace")[:250]
         if error.code == 404:
-            raise RuntimeError(
+            raise GitHubAPIError(
                 "GitHub repository was not found or is private. Check the URL and "
-                "set GITHUB_TOKEN for private repositories."
+                "set GITHUB_TOKEN for private repositories.", error.code
             ) from error
-        raise RuntimeError(f"GitHub returned HTTP {error.code}: {detail}") from error
+        raise GitHubAPIError(f"GitHub returned HTTP {error.code}.", error.code) from error
     except (URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"Could not reach GitHub: {error}") from error
+        raise GitHubAPIError("Could not reach GitHub.") from error
     if isinstance(result, (dict, list)):
         return result
-    raise RuntimeError("GitHub returned an unexpected response.")
+    raise GitHubAPIError("GitHub returned an unexpected response.")
 
 
 def get_remote_repository(
@@ -107,8 +107,8 @@ def get_remote_repository(
         raise ValueError("Enter a GitHub repository URL such as https://github.com/owner/repo.")
     try:
         metadata = _github_json(f"https://api.github.com/repos/{slug}", token)
-    except RuntimeError as error:
-        if public_only and "repository was not found or is private" in str(error):
+    except GitHubAPIError as error:
+        if public_only and error.status_code == 404:
             raise ValueError(
                 "This interface accepts public GitHub repositories only. "
                 "Check the URL and repository visibility."
@@ -209,15 +209,15 @@ def ensure_remote_snapshot(
                 destination.write_bytes(content)
                 files_written += 1
     except HTTPError as error:
-        detail = error.read().decode(errors="replace")[:250]
         if error.code == 404:
-            raise RuntimeError(
+            raise GitHubAPIError(
                 "GitHub could not provide this repository snapshot. For a private "
-                "repository, check that GITHUB_TOKEN has repository read access."
+                "repository, check that GITHUB_TOKEN has repository read access.",
+                error.code,
             ) from error
-        raise RuntimeError(f"GitHub returned HTTP {error.code}: {detail}") from error
+        raise GitHubAPIError(f"GitHub returned HTTP {error.code}.", error.code) from error
     except (URLError, TimeoutError, tarfile.TarError, OSError) as error:
-        raise RuntimeError(f"Could not download GitHub repository: {error}") from error
+        raise GitHubAPIError("Could not download the GitHub repository.") from error
 
     if not files_written:
         raise RuntimeError("No supported source or documentation files were found in the repository.")

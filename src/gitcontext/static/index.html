@@ -9,8 +9,8 @@
     <meta property="og:description" content="Inspect a public GitHub repository's architecture and source files, then ask questions with source citations." />
     <meta property="og:type" content="website" />
     <title>GitContext - Repository Q&amp;A</title>
-    <link rel="stylesheet" href="/static/app.css?v=14" />
-    <script src="/static/app.js?v=12" defer></script>
+    <link rel="stylesheet" href="/static/app.css?v=15" />
+    <script src="/static/app.js?v=13" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -26,12 +26,15 @@
             </svg>
             <span class="brand-wordmark"><span>git</span><span class="brand-context">context</span></span>
           </a>
-          <nav class="primary-nav" aria-label="Main navigation">
+          <button class="menu-toggle" id="menu-toggle" type="button" aria-controls="main-navigation" aria-expanded="false" aria-label="Open navigation">
+            <span></span><span></span><span></span>
+          </button>
+          <nav class="primary-nav" id="main-navigation" aria-label="Main navigation">
             <a href="#repository">Repository</a>
             <a href="#architecture" data-requires-index="diagram">Architecture</a>
             <a href="#repository-qa" data-requires-index="ask">Ask</a>
+            <a class="button button-primary header-cta" href="#repository">Connect repository</a>
           </nav>
-          <a class="button button-primary header-cta" href="#repository">Connect repository</a>
         </header>
 
         <main id="main-content" class="content-wrap">
@@ -75,7 +78,12 @@
           </section>
 
           <section id="repository-panel" class="workspace-grid hidden">
-            <section id="architecture" class="panel diagram-panel" aria-labelledby="diagram-title">
+            <div class="workspace-tabs" role="tablist" aria-label="Repository workspace">
+              <button id="workspace-tab-files" type="button" role="tab" aria-controls="workspace-panel-files" aria-selected="true" data-workspace-tab="files">Files</button>
+              <button id="workspace-tab-architecture" type="button" role="tab" aria-controls="architecture" aria-selected="false" data-workspace-tab="architecture" tabindex="-1">Architecture</button>
+              <button id="workspace-tab-ask" type="button" role="tab" aria-controls="repository-qa" aria-selected="false" data-workspace-tab="ask" tabindex="-1">Ask</button>
+            </div>
+            <section id="architecture" class="panel diagram-panel" role="tabpanel" aria-labelledby="workspace-tab-architecture" tabindex="0">
               <div class="diagram-heading">
                 <div>
                   <div class="eyebrow small-eyebrow">REPOSITORY MAP</div>
@@ -101,7 +109,7 @@
               </details>
             </section>
 
-            <div class="left-column">
+            <div class="left-column" id="workspace-panel-files" role="tabpanel" aria-labelledby="workspace-tab-files" tabindex="0">
               <section class="panel repo-summary">
                 <div class="panel-header"><div><div class="eyebrow small-eyebrow">CURRENT REPOSITORY</div><h2 id="repo-name">Repository</h2></div><span class="git-badge" id="git-badge"></span></div>
                 <div class="repo-path" id="repo-full-path"></div>
@@ -118,7 +126,7 @@
               </section>
             </div>
 
-            <section id="repository-qa" class="panel chat-panel">
+            <section id="repository-qa" class="panel chat-panel" role="tabpanel" aria-labelledby="workspace-tab-ask" tabindex="0">
                 <div class="chat-header"><div><h2>Ask this repository</h2><p>Answers include source paths and line numbers.</p></div></div>
               <div class="chat-body" id="chat-body" role="log" aria-live="polite" aria-relevant="additions text">
                 <div class="empty-chat" id="empty-chat"><h3>Ask about this codebase</h3><p>Build the search index to enable questions. Answers include source paths and line numbers.</p><div class="suggestion-list"><button class="suggestion" data-question="Where is the application entry point?" disabled>Where is the application entry point?</button><button class="suggestion" data-question="How does authentication work?" disabled>How does authentication work?</button><button class="suggestion" data-question="What are the main modules?" disabled>What are the main modules?</button></div></div>

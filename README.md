@@ -9,6 +9,9 @@ Questions return cited repository evidence, with optional LLM synthesis.
 
 ![GitContext architecture](docs/architecture.png)
 
+See [backend architecture details](docs/backend-architecture.md) for the
+verified package responsibilities, import dependencies, and runtime workflows.
+
 ## Install
 
 Python 3.12 or 3.13 is required.
