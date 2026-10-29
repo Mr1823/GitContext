@@ -4,13 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#111410" />
-    <meta name="description" content="Index a public GitHub repository, inspect its architecture, and ask questions with source file citations." />
+    <meta name="description" content="Inspect a public GitHub repository's architecture and source files, then ask questions with source citations." />
     <meta property="og:title" content="GitContext - Repository Q&amp;A" />
-    <meta property="og:description" content="Index a public GitHub repository, inspect its architecture, and ask questions with source file citations." />
+    <meta property="og:description" content="Inspect a public GitHub repository's architecture and source files, then ask questions with source citations." />
     <meta property="og:type" content="website" />
     <title>GitContext - Repository Q&amp;A</title>
-    <link rel="stylesheet" href="/static/app.css?v=13" />
-    <script src="/static/app.js?v=11" defer></script>
+    <link rel="stylesheet" href="/static/app.css?v=14" />
+    <script src="/static/app.js?v=12" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -38,8 +38,8 @@
           <section class="welcome-row">
             <div class="welcome-copy">
               <div class="eyebrow">CODEBASE INTELLIGENCE</div>
-              <h1>Find your way through a codebase.</h1>
-              <p class="subtitle">Index a public GitHub repository, inspect its architecture, and ask questions with source file citations.</p>
+              <h1>Understand an unfamiliar codebase.</h1>
+              <p class="subtitle">Inspect a public GitHub repository's architecture and source files, then ask questions with source citations.</p>
               <p class="index-status hidden" id="index-status" aria-live="polite"></p>
             </div>
             <svg class="orbit-emblem" viewBox="0 0 200 130" aria-hidden="true" focusable="false">
@@ -61,14 +61,16 @@
 
           <section id="repository" class="repo-card panel" aria-labelledby="connect-title">
             <div class="section-heading">
-              <div><h2 id="connect-title">Connect a repository</h2><p>Enter a public GitHub repository URL.</p></div>
+              <div><h2 id="connect-title">Connect a public repository</h2><p>Paste a GitHub repository URL to inspect its source files.</p></div>
             </div>
             <form id="repository-form" class="repo-form">
-              <label class="sr-only" for="repository-path">Public GitHub repository URL</label>
-              <div class="path-input-wrap"><input id="repository-path" name="path" type="url" inputmode="url" aria-describedby="repository-hint" placeholder="https://github.com/owner/repository" pattern="https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" autocomplete="url" spellcheck="false" required /></div>
-              <button class="button button-primary" id="scan-button" type="submit"><span>Index repository</span></button>
+              <label class="field-label" for="repository-path">GitHub repository URL</label>
+              <div class="repo-form-row">
+                <div class="path-input-wrap"><input id="repository-path" name="path" type="url" inputmode="url" aria-describedby="repository-hint" placeholder="https://github.com/owner/repository" pattern="https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" autocomplete="url" spellcheck="false" required /></div>
+                <button class="button button-primary" id="scan-button" type="submit"><span>Connect repository</span></button>
+              </div>
             </form>
-            <p class="form-hint" id="repository-hint">Only public GitHub repositories work for now.</p>
+            <p class="form-hint" id="repository-hint">Public GitHub repositories only. Connecting checks the repository and lists supported source files.</p>
             <div id="repo-error" class="notice notice-error hidden" role="alert"></div>
           </section>
 
@@ -105,7 +107,7 @@
                 <div class="repo-path" id="repo-full-path"></div>
                 <div class="stats-row"><div><strong id="file-count"></strong><span>source files</span></div><div><strong id="chunk-count"></strong><span>indexed chunks</span></div></div>
                 <button class="button button-secondary full-width" id="index-button" type="button"><span>Build search index</span></button>
-                <div id="index-progress" class="progress-wrap hidden"><div class="progress-track"><span></span></div><span>Reading repository files and building the index…</span></div>
+                <div id="index-progress" class="progress-wrap hidden" role="status" aria-live="polite" aria-busy="false"><div class="progress-track" aria-hidden="true"><span></span></div><span>Reading repository files and building the index…</span></div>
                 <div id="index-warnings" class="notice notice-warning hidden" role="status"></div>
               </section>
 
@@ -119,19 +121,15 @@
             <section id="repository-qa" class="panel chat-panel">
                 <div class="chat-header"><div><h2>Ask this repository</h2><p>Answers include source paths and line numbers.</p></div></div>
               <div class="chat-body" id="chat-body" role="log" aria-live="polite" aria-relevant="additions text">
-                <div class="empty-chat" id="empty-chat"><h3>Ask about a file, function, or commit</h3><p>Index this repository first. Answers include citations you can open.</p><div class="suggestion-list"><button class="suggestion" data-question="Where is the application entry point?">Where is the application entry point?</button><button class="suggestion" data-question="How does authentication work?">How does authentication work?</button><button class="suggestion" data-question="What are the main modules?">What are the main modules?</button></div></div>
+                <div class="empty-chat" id="empty-chat"><h3>Ask about this codebase</h3><p>Build the search index to enable questions. Answers include source paths and line numbers.</p><div class="suggestion-list"><button class="suggestion" data-question="Where is the application entry point?" disabled>Where is the application entry point?</button><button class="suggestion" data-question="How does authentication work?" disabled>How does authentication work?</button><button class="suggestion" data-question="What are the main modules?" disabled>What are the main modules?</button></div></div>
               </div>
               <form id="question-form" class="question-form"><label class="sr-only" for="question-input">Ask a question about this repository</label><textarea id="question-input" name="question" rows="1" maxlength="4000" placeholder="Ask about this repository's code" required disabled></textarea><button id="ask-button" class="send-button" type="submit" aria-label="Send question" disabled>Ask</button><div class="input-meta"><span>Enter to send</span></div></form>
             </section>
           </section>
         </main>
         <footer class="footer">
-          <a class="footer-brand" href="/">GitContext</a>
-          <nav aria-label="Footer navigation">
-            <a href="#repository">Repository</a>
-            <a href="#architecture" data-requires-index="diagram">Architecture</a>
-            <a href="#repository-qa" data-requires-index="ask">Ask</a>
-          </nav>
+          <a class="footer-brand" href="/" aria-label="GitContext home">GitContext</a>
+          <a class="footer-link" href="https://github.com/Mr1823/GitContext">GitHub repository</a>
         </footer>
       </div>
     </div>

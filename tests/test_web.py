@@ -44,8 +44,10 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             home = await client.get("/")
             assert home.status_code == 200
-            assert "Ask a question. Get the file it came from." in home.text
-            assert 'class="brand-lockup" role="img" aria-label="GitContext"' in home.text
+            assert "Understand an unfamiliar codebase." in home.text
+            assert 'class="brand-lockup" href="/" aria-label="GitContext home"' in home.text
+            assert 'aria-label="Main navigation"' in home.text
+            assert 'class="field-label" for="repository-path"' in home.text
             assert 'class="orbit-emblem" viewBox="0 0 200 130"' in home.text
             assert home.text.count('M15 14v16M22 11v21M29 14v16') == 2
             assert (await client.get("/static/app.js")).status_code == 200
@@ -66,6 +68,22 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
             assert answer.status_code == 200
             assert "auth.py" in answer.json()["answer"]
             assert answer.json()["sources"][0]["path"] == "auth.py"
+
+    asyncio.run(workflow())
+
+
+def test_web_404_returns_branded_html_for_browser_and_json_for_api() -> None:
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            page = await client.get("/missing-page", headers={"accept": "text/html"})
+            assert page.status_code == 404
+            assert "Page not found" in page.text
+            assert 'href="/">Return to GitContext' in page.text
+
+            api = await client.get("/missing-api-route", headers={"accept": "application/json"})
+            assert api.status_code == 404
+            assert api.json() == {"detail": "Not found"}
 
     asyncio.run(workflow())
 

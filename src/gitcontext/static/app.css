@@ -128,10 +128,13 @@ h1{max-width:930px;font-size:var(--type-display);line-height:1.06;letter-spacing
   --type-body:16px;
   --type-section:20px;
   --content-max:1280px;
+  --radius-panel:8px;
 }
 html{scroll-behavior:smooth;scroll-padding-top:96px}
 body{font-size:var(--type-body);line-height:1.55}
-.topbar{min-height:76px;height:auto;gap:24px;padding:12px max(5%,calc((100vw - 1280px)/2));}
+.app-shell{min-height:100svh}
+.main-area{min-height:0}
+.topbar{min-height:72px;height:auto;gap:24px;padding:12px max(5%,calc((100vw - 1280px)/2));}
 .brand-lockup{text-decoration:none;flex:0 0 auto}
 .skip-link{position:fixed;z-index:20;top:8px;left:8px;transform:translateY(-160%);padding:10px 14px;border-radius:6px;background:var(--accent);color:#172111;font-weight:600}
 .skip-link:focus{transform:translateY(0)}
@@ -139,11 +142,22 @@ body{font-size:var(--type-body);line-height:1.55}
 .primary-nav a,.footer nav a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;color:var(--text);font-size:14px;text-decoration:none;border-radius:6px}
 .primary-nav a:hover,.footer nav a:hover{color:var(--accent);background:var(--panel-soft)}
 .header-cta{display:inline-flex;align-items:center;justify-content:center;min-height:44px;color:#172111;text-decoration:none;white-space:nowrap}
-.welcome-row{align-items:center}
+.welcome-row{align-items:center;min-height:0;margin-bottom:40px;gap:40px}
 .welcome-copy .eyebrow{color:var(--accent);font:600 12px/1.4 var(--mono);letter-spacing:.14em}
-.subtitle{font-size:16px;line-height:1.65}
+.welcome-row h1{max-width:700px;font-size:clamp(36px,4vw,52px);line-height:1.08;letter-spacing:-.04em;margin:12px 0}
+.subtitle{max-width:640px;font-size:16px;line-height:1.65;color:#a0a69a}
+.orbit-emblem{width:160px;height:108px;opacity:.8}
 .section-heading p,.diagram-heading p,.chat-header p,.files-heading p,.form-hint{font-size:14px;line-height:1.55}
 .button{font-size:14px}
+.field-label{display:block;color:var(--text);font-size:14px;font-weight:600}
+.repo-form{display:grid;gap:8px}
+.repo-form-row{display:flex;align-items:center;gap:12px;min-width:0}
+.path-input-wrap{min-height:48px;height:auto}
+.path-input-wrap input{font-size:15px}
+.button-primary{min-height:48px}
+.workspace-grid{grid-template-columns:minmax(280px,.72fr) minmax(0,1.28fr);gap:24px}
+.chat-panel{min-height:600px}
+.chat-body{min-height:360px;max-height:70vh}
 .stats-row span,.repo-path,.file-row,.message-label,.source-card summary,.progress-wrap,.diagram-status,.diagram-sources,.input-meta{font-size:14px}
 .file-search{min-height:44px;height:auto}
 .file-search input{font-size:16px}
@@ -156,10 +170,23 @@ body{font-size:var(--type-body);line-height:1.55}
 .source-card pre{font-size:13px;line-height:1.65}
 .question-form textarea{font-size:16px;line-height:1.5}
 .send-button{min-width:48px;min-height:44px;height:44px;font-size:14px}
-.footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;width:min(90%,1280px);margin:40px auto 0;padding:20px 0 0;border-top:1px solid var(--border);color:var(--muted);font-size:14px}
+.footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;width:min(90%,1280px);margin:32px auto 0;padding:16px 0 20px;border-top:1px solid var(--border);color:var(--muted);font-size:14px}
 .footer-brand{color:var(--text);font:500 14px var(--mono);text-decoration:none}
-.footer nav{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
-.footer nav a{color:var(--muted)}
+.footer-link{display:inline-flex;align-items:center;min-height:44px;color:var(--muted);font-size:14px;text-decoration:none}
+.footer-link:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+.primary-nav a[aria-current="location"]{color:var(--accent);background:var(--panel-soft)}
+.button,.primary-nav a,.suggestion,.citation-open-link{transition:color .16s ease,background-color .16s ease,border-color .16s ease,transform .16s ease}
+.suggestion:disabled{opacity:.58;cursor:not-allowed}
+.message-text p{margin:0 0 12px}
+.message-text p:last-child{margin-bottom:0}
+.message-text h3{margin:18px 0 8px;font:600 17px/1.4 var(--display)}
+.message-text ul,.message-text ol{margin:4px 0 14px;padding-left:24px}
+.message-text li{margin:4px 0}
+.message-text pre{overflow:auto;margin:12px 0;padding:14px;border:1px solid var(--border);border-radius:6px;background:var(--bg);font:13px/1.6 var(--mono);white-space:pre}
+.message-text pre code{font:inherit}
+.message-text p code{padding:2px 4px;border-radius:3px;background:var(--bg);font:13px var(--mono)}
+.citation-open-link{display:inline-flex;align-items:center;min-height:44px;margin:0 10px 10px;color:var(--accent);font-size:14px;text-decoration:underline;text-underline-offset:3px}
+.file-row:nth-child(3n+2) .file-type,.file-row:nth-child(3n+3) .file-type{background:var(--panel-soft);color:var(--muted)}
 [id]{scroll-margin-top:100px}
 @media(max-width:780px){
   .topbar{display:flex;flex-wrap:wrap;min-height:0;padding:10px 16px;gap:8px 12px}
@@ -167,24 +194,29 @@ body{font-size:var(--type-body);line-height:1.55}
   .header-cta{padding-inline:12px}
   .primary-nav{order:3;width:100%;justify-content:flex-start;overflow-x:auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
   .primary-nav a{flex:0 0 auto}
-  .footer{width:auto;margin:32px 16px 0;align-items:flex-start;flex-direction:column;gap:8px}
+  .footer{width:auto;margin:24px 16px 0;align-items:flex-start;flex-direction:column;gap:8px}
+  .welcome-row{margin-bottom:32px}
+  .orbit-emblem{width:120px;height:90px}
+  .workspace-grid{grid-template-columns:minmax(0,1fr)}
+  .chat-panel{min-height:540px}
 }
 @media(max-width:520px){
   .topbar{padding-inline:12px}
   .brand-lockup{font-size:20px;gap:6px}
   .brand-symbol{width:32px;height:32px}
-  .header-cta{min-height:42px;font-size:13px}
+  .header-cta{min-height:44px;font-size:13px}
   .primary-nav{justify-content:space-between}
   .primary-nav a{padding-inline:10px;font-size:14px}
   .content-wrap{padding:32px 16px 24px}
-  .welcome-row{min-height:0;margin-bottom:32px}
-  .welcome-row h1{font-size:clamp(32px,9vw,42px);max-width:13ch}
+  .welcome-row{min-height:0;margin-bottom:28px;gap:8px}
+  .welcome-row h1{font-size:clamp(32px,8.6vw,42px);max-width:14ch}
   .subtitle{font-size:16px;max-width:34ch}
-  .orbit-emblem{width:70px;height:62px}
+  .orbit-emblem{width:78px;height:64px;flex:0 0 78px}
   .repo-card{padding:20px 16px}
-  .repo-form{gap:12px}
+  .repo-form-row{flex-direction:column;align-items:stretch;gap:12px}
   .path-input-wrap{min-height:48px;height:auto}
   .button-primary{min-height:48px}
+  .repo-form-row .button{width:100%}
   .chat-panel{min-height:520px}
   .chat-body{min-height:300px}
   .send-button{right:18px;top:18px}

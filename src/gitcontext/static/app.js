@@ -13,13 +13,27 @@ let mermaidPromise;
 let diagramRenderNumber = 0;
 let currentDiagramSource = "";
 
-const storedPath = sessionStorage.getItem("gitcontext.repository");
-if (storedPath && githubUrlPattern.test(storedPath)) repoInput.value = storedPath;
-
 function scrollTo(element, block = "start") {
   const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
   element.scrollIntoView({ behavior, block });
 }
+
+function updateCurrentNavigation() {
+  const currentHash = window.location.hash || "#repository";
+  document.querySelectorAll(".primary-nav a").forEach((link) => {
+    if (link.getAttribute("href") === currentHash) link.setAttribute("aria-current", "location");
+    else link.removeAttribute("aria-current");
+  });
+}
+
+window.addEventListener("hashchange", updateCurrentNavigation);
+updateCurrentNavigation();
+
+repoInput.addEventListener("input", () => {
+  repoInput.setCustomValidity(repoInput.value && !githubUrlPattern.test(repoInput.value)
+    ? "Enter a GitHub URL in this format: https://github.com/owner/repository."
+    : "");
+});
 
 document.querySelectorAll('a[data-requires-index]').forEach((link) => {
   link.addEventListener("click", (event) => {
@@ -31,9 +45,11 @@ document.querySelectorAll('a[data-requires-index]').forEach((link) => {
       scrollTo(byId("repository"), "center");
       return;
     }
-    if (link.dataset.requiresIndex === "ask" && !indexed) {
+    if (!indexed) {
       event.preventDefault();
-      byId("index-status").textContent = "Build the search index before asking questions.";
+      byId("index-status").textContent = link.dataset.requiresIndex === "diagram"
+        ? "Build the search index before generating the architecture diagram."
+        : "Build the search index before asking questions.";
       byId("index-status").classList.remove("hidden");
       byId("index-button").focus();
       scrollTo(byId("index-button"), "center");
@@ -64,6 +80,7 @@ function updateDiagramAvailability() {
   const output = byId("diagram-output");
   const status = byId("diagram-status");
   button.disabled = !indexed;
+  button.setAttribute("aria-busy", "false");
   button.querySelector("span").textContent = output.hasChildNodes()
     ? "Refresh diagram"
     : "Generate diagram";
@@ -303,6 +320,7 @@ function setNotice(message) {
 
 function setBusy(button, busy, label) {
   button.disabled = busy;
+  button.setAttribute("aria-busy", String(busy));
   const span = button.querySelector("span:first-child");
   if (span && label) span.textContent = label;
 }
@@ -353,8 +371,19 @@ function setIndexStatus(data) {
   if (Number.isInteger(pullRequests)) fields.push(`${pullRequests} pull requests`);
   if (Number.isInteger(incidents)) fields.push(`${incidents} incidents`);
   const line = byId("index-status");
-  line.textContent = hasIndex && fields.length ? `Index: ${fields.join(", ")}` : "";
+  if (hasIndex) line.textContent = `Index ready${fields.length ? ` · ${fields.join(", ")}` : ""}. Ask a question or generate the architecture diagram.`;
+  else if (Number.isInteger(data.chunks)) line.textContent = "Index finished without searchable chunks. Check the indexing warnings or choose a repository with supported source files.";
+  else if (Number.isInteger(files)) line.textContent = `Repository connected · ${files} source ${files === 1 ? "file" : "files"} found. Build the search index to enable questions and the architecture diagram.`;
+  else line.textContent = "";
   line.classList.toggle("hidden", !line.textContent);
+}
+
+function updateQuestionEmptyState() {
+  byId("empty-chat").classList.remove("hidden");
+  byId("empty-chat").querySelector("p").textContent = indexed
+    ? "Choose an example or ask about a file, function, or request flow."
+    : "Build the search index to enable questions. Answers include source paths and line numbers.";
+  document.querySelectorAll(".suggestion").forEach((button) => { button.disabled = !indexed; });
 }
 
 function showRepository(data) {
@@ -366,7 +395,6 @@ function showRepository(data) {
   }
   activeRepository = data.repository;
   indexed = Boolean(data.indexed_chunks);
-  sessionStorage.setItem("gitcontext.repository", activeRepository);
   byId("repo-name").textContent = activeRepository.split(/[\\/]/).filter(Boolean).pop() || activeRepository;
   byId("repo-full-path").textContent = activeRepository;
   byId("git-badge").textContent = data.remote ? "GitHub repository" : "";
@@ -377,45 +405,70 @@ function showRepository(data) {
   updateDiagramAvailability();
   byId("index-button").disabled = false;
   byId("index-button").querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
-  byId("empty-chat").classList.toggle("hidden", indexed);
+  updateQuestionEmptyState();
   renderFiles(data.files);
   repoPanel.classList.remove("hidden");
 }
 
 repoForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const button = byId("scan-button");
+  if (button.disabled) return;
   setNotice("");
   const path = repoInput.value.trim();
   if (!path) return;
-  const button = byId("scan-button");
+  const previousRepository = activeRepository;
+  const previousIndexStatus = byId("index-status").textContent;
   setBusy(button, true, "Checking repository…");
+  byId("index-status").textContent = "Checking the public GitHub repository…";
+  byId("index-status").classList.remove("hidden");
   try {
     const result = await api("/api/scan", { path });
     showRepository(result);
     scrollTo(repoPanel);
   } catch (error) {
     setNotice(error.message);
-    repoPanel.classList.add("hidden");
-    setIndexStatus({});
+    if (previousRepository !== path) {
+      activeRepository = "";
+      indexed = false;
+      repoPanel.classList.add("hidden");
+      chatBody.replaceChildren(byId("empty-chat"));
+      updateQuestionEmptyState();
+      resetDiagram();
+      questionInput.disabled = true;
+      byId("ask-button").disabled = true;
+      setIndexStatus({});
+    } else {
+      byId("index-status").textContent = previousIndexStatus;
+      byId("index-status").classList.toggle("hidden", !previousIndexStatus);
+    }
   } finally {
-    setBusy(button, false, "Index repository");
+    setBusy(button, false, "Connect repository");
   }
 });
 
 byId("index-button").addEventListener("click", async () => {
   if (!activeRepository) return;
   const button = byId("index-button");
+  if (button.disabled) return;
+  const previousIndexStatus = byId("index-status").textContent;
   setBusy(button, true, "Indexing…");
   byId("index-progress").classList.remove("hidden");
+  byId("index-progress").setAttribute("aria-busy", "true");
+  byId("index-status").textContent = "Building the search index…";
+  byId("index-status").classList.remove("hidden");
   setNotice("");
+  byId("index-warnings").textContent = "";
+  byId("index-warnings").classList.add("hidden");
   try {
     const result = await api("/api/index", { path: activeRepository });
     indexed = result.chunks > 0;
     byId("chunk-count").textContent = String(result.chunks);
     questionInput.disabled = !indexed;
     byId("ask-button").disabled = !indexed;
+    document.querySelectorAll(".suggestion").forEach((suggestion) => { suggestion.disabled = !indexed; });
     updateDiagramAvailability();
-    byId("empty-chat").classList.toggle("hidden", indexed);
+    updateQuestionEmptyState();
     setIndexStatus(result);
     button.querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
     const warnings = result.warnings || [];
@@ -424,9 +477,16 @@ byId("index-button").addEventListener("click", async () => {
     warningBox.classList.toggle("hidden", warnings.length === 0);
   } catch (error) {
     setNotice(error.message);
+    byId("index-status").textContent = indexed
+      ? "Index update failed. The current index is still available."
+      : "Indexing failed. Resolve the error above, then try again.";
+    if (previousIndexStatus && indexed) byId("index-status").textContent += ` ${previousIndexStatus}`;
+    byId("index-status").classList.remove("hidden");
   } finally {
     byId("index-progress").classList.add("hidden");
+    byId("index-progress").setAttribute("aria-busy", "false");
     button.disabled = false;
+    button.setAttribute("aria-busy", "false");
     button.querySelector("span").textContent = indexed ? "Rebuild search index" : "Build search index";
   }
 });
@@ -445,6 +505,101 @@ byId("file-filter").addEventListener("input", (event) => {
   }
 });
 
+function renderInlineText(container, text) {
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  let position = 0;
+  for (const match of text.matchAll(pattern)) {
+    container.append(document.createTextNode(text.slice(position, match.index)));
+    const marker = match[0];
+    const element = marker.startsWith("`") ? document.createElement("code") : document.createElement("strong");
+    element.textContent = marker.startsWith("`") ? marker.slice(1, -1) : marker.slice(2, -2);
+    container.append(element);
+    position = match.index + marker.length;
+  }
+  container.append(document.createTextNode(text.slice(position)));
+}
+
+function renderAnswer(container, answer) {
+  const lines = answer.split(/\r?\n/);
+  let paragraph = [];
+  let list = null;
+  let codeLines = null;
+  let codeLanguage = "";
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const block = document.createElement("p");
+    renderInlineText(block, paragraph.join(" "));
+    container.append(block);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!list) return;
+    container.append(list);
+    list = null;
+  };
+  for (const line of lines) {
+    const fence = line.match(/^\s*```([\w+-]*)\s*$/);
+    if (fence && codeLines === null) {
+      flushParagraph();
+      flushList();
+      codeLines = [];
+      codeLanguage = fence[1];
+      continue;
+    }
+    if (fence && codeLines !== null) {
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (codeLanguage) code.className = `language-${codeLanguage}`;
+      code.textContent = codeLines.join("\n");
+      pre.append(code);
+      container.append(pre);
+      codeLines = null;
+      codeLanguage = "";
+      continue;
+    }
+    if (codeLines !== null) {
+      codeLines.push(line);
+      continue;
+    }
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+    } else if (heading) {
+      flushParagraph();
+      flushList();
+      const block = document.createElement("h3");
+      renderInlineText(block, heading[1]);
+      container.append(block);
+    } else if (bullet || numbered) {
+      flushParagraph();
+      const type = bullet ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== type) {
+        flushList();
+        list = document.createElement(type);
+      }
+      const item = document.createElement("li");
+      renderInlineText(item, (bullet || numbered)[1]);
+      list.append(item);
+    } else {
+      flushList();
+      paragraph.push(line.trim());
+    }
+  }
+  if (codeLines !== null) {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    if (codeLanguage) code.className = `language-${codeLanguage}`;
+    code.textContent = codeLines.join("\n");
+    pre.append(code);
+    container.append(pre);
+  }
+  flushParagraph();
+  flushList();
+}
+
 function appendMessage(role, text, sources = [], latency = null) {
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
@@ -455,7 +610,8 @@ function appendMessage(role, text, sources = [], latency = null) {
   label.textContent = role === "user" ? "You" : `GitContext${latency === null ? "" : ` · ${latency} ms retrieval`}`;
   const body = document.createElement("div");
   body.className = "message-text";
-  body.textContent = text;
+  if (role === "assistant") renderAnswer(body, text);
+  else body.textContent = text;
   content.append(label, body);
   wrapper.append(content);
   if (sources.length) {
@@ -466,10 +622,30 @@ function appendMessage(role, text, sources = [], latency = null) {
       const citation = document.createElement("details");
       citation.className = "source-card";
       const summary = document.createElement("summary");
-      summary.textContent = `${source.path}:${source.start_line}`;
-      const code = document.createElement("pre");
-      code.textContent = source.content;
-      citation.append(summary, code);
+      const hasLine = Number.isInteger(source.start_line);
+      const range = hasLine
+        ? `:${source.start_line}${Number.isInteger(source.end_line) && source.end_line !== source.start_line ? `-${source.end_line}` : ""}`
+        : "";
+      summary.textContent = `${source.path}${range}`;
+      const excerpt = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = source.content || "";
+      excerpt.append(code);
+      citation.append(summary, excerpt);
+      if (["code", "documentation"].includes(source.source_type) && typeof source.source_url === "string") {
+        try {
+          const url = new URL(source.source_url);
+          if (url.protocol === "https:" && url.hostname === "github.com") {
+            const link = document.createElement("a");
+            link.className = "citation-open-link";
+            link.href = url.href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "Open source on GitHub";
+            citation.append(link);
+          }
+        } catch { /* Ignore malformed citation URLs. */ }
+      }
       citations.append(citation);
     }
     wrapper.append(citations);
@@ -479,7 +655,7 @@ function appendMessage(role, text, sources = [], latency = null) {
 }
 
 async function askQuestion(question) {
-  if (!indexed || !question.trim()) return;
+  if (!indexed || !question.trim() || byId("ask-button").disabled) return;
   byId("empty-chat").classList.add("hidden");
   appendMessage("user", question.trim());
   questionInput.value = "";
@@ -489,14 +665,15 @@ async function askQuestion(question) {
   chatBody.append(loading);
   chatBody.scrollTop = chatBody.scrollHeight;
   byId("ask-button").disabled = true;
+  byId("ask-button").setAttribute("aria-busy", "true");
   try {
     const result = await api("/api/ask", { path: activeRepository, question: question.trim(), top_k: 6 });
     loading.remove();
     if (typeof result.index_refreshed === "boolean") {
       const status = byId("index-status");
-      const counts = result.index_refreshed ? "" : status.textContent.split(" · ")[0];
+      const metrics = status.textContent.replace(/^Index ready(?: · )?/, "").replace(/\. Ask a question or generate the architecture diagram\.$/, "");
       const freshness = result.index_refreshed ? "Index refreshed from GitHub" : "Index current";
-      status.textContent = [counts, freshness].filter(Boolean).join(" · ");
+      status.textContent = ["Index ready", metrics, freshness].filter(Boolean).join(" · ");
       status.classList.remove("hidden");
     }
     const answer = result.answer.startsWith("Relevant code found:") && result.sources.length
@@ -505,15 +682,17 @@ async function askQuestion(question) {
     appendMessage("assistant", answer, result.sources, result.retrieval_ms);
   } catch (error) {
     loading.remove();
-    appendMessage("assistant", error.message);
+    appendMessage("assistant", `The question could not be answered: ${error.message}\n\nCheck the connection and try again.`);
   } finally {
     byId("ask-button").disabled = !indexed;
+    byId("ask-button").setAttribute("aria-busy", "false");
     questionInput.focus();
   }
 }
 
 byId("question-form").addEventListener("submit", (event) => {
   event.preventDefault();
+  if (byId("ask-button").disabled) return;
   askQuestion(questionInput.value);
 });
 
