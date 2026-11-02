@@ -311,3 +311,8 @@ body{font-size:var(--type-body);line-height:1.55}
   .chat-body{min-height:220px;max-height:48vh}
   .files-panel{max-height:55vh}
 }
+
+.primary-nav a.header-cta{color:#000}
+.primary-nav a.header-cta:hover{color:#fff}
+.primary-nav a.header-cta{color:#000}
+.primary-nav a.header-cta:hover{color:#fff}

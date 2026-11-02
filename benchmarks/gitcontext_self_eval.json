@@ -1,0 +1,62 @@
+[
+  {
+    "question": "Which repository files are included by the scanner, and which generated directories are skipped?",
+    "relevant_paths": ["src/gitcontext/ingest/repository.py"]
+  },
+  {
+    "question": "How does GitContext parse a GitHub repository URL, download its snapshot, and reuse a cached commit?",
+    "relevant_paths": ["src/gitcontext/ingest/remote.py"]
+  },
+  {
+    "question": "How are GitHub pull requests, discussion comments, and incident reports converted into searchable records?",
+    "relevant_paths": ["src/gitcontext/ingest/github.py"]
+  },
+  {
+    "question": "How are Python, JavaScript, TypeScript, and Java files parsed into function or class blocks?",
+    "relevant_paths": ["src/gitcontext/ingest/parser.py"]
+  },
+  {
+    "question": "How does GitContext split documentation by headings and split oversized chunks with overlap?",
+    "relevant_paths": ["src/gitcontext/chunking.py", "src/gitcontext/ingest/parser.py"]
+  },
+  {
+    "question": "How does indexing detect changed files, update their chunks, remove missing files, and track the Git head?",
+    "relevant_paths": ["src/gitcontext/indexer.py", "src/gitcontext/vector_store.py"]
+  },
+  {
+    "question": "How are BM25 keyword results combined with optional Qdrant vector results and reranking?",
+    "relevant_paths": ["src/gitcontext/retrieval.py", "src/gitcontext/embeddings.py"]
+  },
+  {
+    "question": "What does answer generation return when no API key is configured, and how are unsupported citations handled?",
+    "relevant_paths": ["src/gitcontext/answer.py"]
+  },
+  {
+    "question": "How does the vector store persist chunk metadata and synchronize dense vectors to Qdrant?",
+    "relevant_paths": ["src/gitcontext/vector_store.py"]
+  },
+  {
+    "question": "How does architecture diagram generation resolve imports, group nodes, and validate Mermaid output?",
+    "relevant_paths": ["src/gitcontext/diagram.py"]
+  },
+  {
+    "question": "Which HTTP endpoints scan, index, answer questions, and generate repository diagrams?",
+    "relevant_paths": ["src/gitcontext/web.py"]
+  },
+  {
+    "question": "Which CLI commands are available for scanning, indexing, asking, diagrams, web service, and evaluation?",
+    "relevant_paths": ["src/gitcontext/cli.py"]
+  },
+  {
+    "question": "Which environment variables configure the model endpoint, embedding model, reranker, and GitHub token?",
+    "relevant_paths": ["src/gitcontext/config.py"]
+  },
+  {
+    "question": "How are embedding models and cross-encoder rerankers loaded and cached?",
+    "relevant_paths": ["src/gitcontext/embeddings.py"]
+  },
+  {
+    "question": "Which metrics does the evaluation module compute for retrieval and answers?",
+    "relevant_paths": ["src/gitcontext/evaluation.py"]
+  }
+]

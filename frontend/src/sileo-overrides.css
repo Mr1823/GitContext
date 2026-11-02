@@ -1,0 +1,3 @@
+[data-sileo-viewport][data-theme="dark"] [data-sileo-description] {
+  color: var(--text-dim);
+}

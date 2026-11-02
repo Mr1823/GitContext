@@ -540,7 +540,7 @@ def test_mermaid_sanitizes_hostile_paths_and_labels() -> None:
     validate_mermaid(mermaid, nodes, groups, [])
     assert "n1[" in mermaid
     assert hostile_path not in mermaid
-    assert "handles auth click now [bad click.py]" in mermaid
+    assert "handles auth click now · src/bad click.py" in mermaid
     assert not re.search(r"[#;|]", mermaid)
     assert sanitize_label('x"] ;#\n y|<z>') == "x y z"
 
@@ -721,6 +721,36 @@ def test_diagram_api_returns_409_without_an_index(tmp_path: Path, monkeypatch) -
             )
             assert response.status_code == 409
             assert "no existing index" in response.json()["detail"]
+
+    asyncio.run(workflow())
+
+
+def test_diagram_api_hides_internal_generation_errors(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / "remotes"
+    repository = cache / "owner" / "repo"
+    repository.mkdir(parents=True)
+    monkeypatch.setattr("gitcontext.web._cache_root", lambda: cache)
+    settings = _settings(repository, monkeypatch)
+    store = _indexed_store(repository, settings)
+    store.set_value("remote_url", "https://github.com/owner/repo")
+    store.set_value("remote_head_sha", "abc123")
+
+    def fail_generation(*args, **kwargs):
+        raise ValueError("private source content and internal detail")
+
+    monkeypatch.setattr("gitcontext.web.generate_diagram", fail_generation)
+
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/api/diagram", params={"repo": "https://github.com/owner/repo"}
+            )
+        assert response.status_code == 500
+        assert response.json() == {
+            "detail": "Could not generate the repository diagram."
+        }
+        assert "private source content" not in response.text
 
     asyncio.run(workflow())
 

@@ -176,6 +176,29 @@ The default index is `<repository>/.gitcontext/index.sqlite`; set
 `GITCONTEXT_DATABASE` to store it elsewhere. Do not commit secrets. `.gitcontext/`
 is ignored by Git.
 
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | unset | Enables LLM answer synthesis and diagram labels. |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint URL. |
+| `GITCONTEXT_LLM_MODEL` | `gpt-4o-mini` | Chat model name. |
+| `GITCONTEXT_EMBEDDING_MODEL` | unset | Enables local dense embeddings and Qdrant search. |
+| `GITCONTEXT_RERANKER_MODEL` | unset | Enables the optional cross-encoder reranker. |
+| `GITHUB_TOKEN` | unset | Authenticates GitHub API requests and raises API quotas. |
+| `GITCONTEXT_DATA_DIR` | unset | Persistent root for per-repository SQLite/Qdrant indexes and, unless overridden, remote snapshots. |
+| `GITCONTEXT_DATABASE` | `<repo>/.gitcontext/index.sqlite` | Overrides the SQLite file path. Takes precedence over `GITCONTEXT_DATA_DIR`. |
+| `GITCONTEXT_REMOTE_CACHE` | platform cache, or `$GITCONTEXT_DATA_DIR/remotes` | Remote GitHub snapshot storage location. |
+| `GITCONTEXT_MAX_REPO_MB` | `100` | Rejects GitHub repositories above this GitHub-reported size. |
+| `GITCONTEXT_MAX_FILES` | `1500` | Rejects GitHub repositories whose Git tree has more blobs than this. |
+| `GITCONTEXT_INGEST_GITHUB` | `true` | Enables GitHub history, pull request, and incident ingestion. |
+| `GITCONTEXT_HISTORY_LIMIT` | `200` | Maximum recent commits to ingest; `0` disables commit history. |
+
+The web API limits `/api/index` to 5 requests per 5 minutes per client IP and
+`/api/scan`, `/api/ask`, and `/api/diagram` to 15 requests per minute each.
+These limits and repository locks are in memory per server process; multiple
+replicas need a shared limiter and lock service for global coordination.
+
 ## Evaluation
 
 Create a JSON fixture containing questions, relevant file paths, and optional
@@ -193,7 +216,62 @@ When `OPENAI_API_KEY` is set, evaluation sends each question through the
 configured answer endpoint; without it, evaluation scores the local evidence
 answer and makes no model requests.
 
+The repository self-evaluation fixture is
+`benchmarks/gitcontext_self_eval.json` (15 questions). On the checked local
+index using BM25 only, the recorded baseline was Recall@5 `0.633`, Precision@5
+`0.133`, mean reciprocal rank `0.374`, average retrieval latency `18.6 ms`, and
+citation accuracy `0.967`. These are a local baseline, not a general quality
+claim; rerun the fixture after indexing the current revision to compare changes.
+
+## Docker deployment
+
+Build and run the single-container web service with persistent storage:
+
+```bash
+docker build -t gitcontext .
+docker run --rm -p 8765:8765 -v gitcontext-data:/data \
+  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+  -e OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}" \
+  -e GITCONTEXT_LLM_MODEL="${GITCONTEXT_LLM_MODEL:-gpt-4o-mini}" \
+  gitcontext
+```
+
+Open `http://127.0.0.1:8765`. The Node 20 Alpine build stage creates the React
+bundle. The Python runtime uses Python 3.12 Slim because `pyproject.toml`
+requires Python 3.12 or 3.13; Python 3.11 would fail package installation.
+`GITCONTEXT_DATA_DIR=/data` stores each repository's SQLite index, adjacent
+Qdrant collection, and default remote snapshot cache in the mounted volume.
+For a public deployment, put the service behind HTTPS and an authentication
+layer; the current rate limits and locks are process-local.
+
 ## Development
+
+The web UI uses React, Vite, and Sileo. Install the workspace dependencies,
+then start FastAPI and Vite in separate terminals:
+
+```bash
+npm install
+source .venv/bin/activate
+uvicorn gitcontext.web:app --host 127.0.0.1 --port 8765
+```
+
+```bash
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/`. Keep the FastAPI terminal running on port 8765;
+Vite proxies API calls and `/static/app.css` to it. If FastAPI is stopped, the
+page can open but repository actions and the stylesheet will fail. Build the
+frontend bundle for the packaged FastAPI web server with:
+
+```bash
+npm --prefix frontend run build
+```
+
+The build is written to `src/gitcontext/static/build/` and served by `gitcontext
+web` and Uvicorn at `http://127.0.0.1:8765`.
+
+Python checks:
 
 ```bash
 pytest

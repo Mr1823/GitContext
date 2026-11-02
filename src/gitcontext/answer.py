@@ -1,11 +1,14 @@
 """Grounded answer generation with an optional OpenAI-compatible endpoint."""
 
 import json
+import re
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from gitcontext.config import Settings
+
+_CITATION_RE = re.compile(r"([\w./-]+):(\d+)-(\d+)")
 
 
 def format_evidence_answer(results: list[dict[str, Any]]) -> str:
@@ -34,6 +37,27 @@ def format_evidence_answer(results: list[dict[str, Any]]) -> str:
         sections.append(f"\n**{citation}**\n```\n{snippet}\n```")
     sections.append("\nSet `OPENAI_API_KEY` to have GitContext synthesize an answer from these excerpts.")
     return "\n".join(sections)
+
+
+def ensure_supported_citations(
+    answer: str, results: list[dict[str, Any]]
+) -> str:
+    """Keep generated citations only when every path and line range is retrieved evidence."""
+    citations = list(_CITATION_RE.finditer(answer))
+    if not citations:
+        return format_evidence_answer(results)
+
+    for citation in citations:
+        path, start_text, end_text = citation.groups()
+        start, end = int(start_text), int(end_text)
+        if start < 1 or end < start or not any(
+            item["path"] == path
+            and start >= item["start_line"]
+            and end <= item["end_line"]
+            for item in results
+        ):
+            return format_evidence_answer(results)
+    return answer
 
 
 def complete_json(prompt: str, settings: Settings) -> str:

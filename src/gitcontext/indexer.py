@@ -87,6 +87,7 @@ def index_repository(
     *,
     remote_url: str | None = None,
     remote_head_sha: str | None = None,
+    sync_vectors: bool = True,
 ) -> IndexSummary:
     """Incrementally update source files and refresh Git/GitHub context."""
     root = Path(repository).resolve()
@@ -174,7 +175,8 @@ def index_repository(
         except RuntimeError as error:
             warnings.append(str(error))
 
-    store.sync_qdrant()
+    if sync_vectors:
+        store.sync_qdrant()
     store.set_value("head_sha", remote_head_sha or current_head)
     indexed_records = store.all()
     indexed_commits = {
@@ -241,6 +243,7 @@ def index_remote_repository(
         refresh_external=False,
         remote_url=remote.url,
         remote_head_sha=remote.head_sha,
+        sync_vectors=False,
     )
     settings = Settings.for_repository(remote.cache_path)
     store = VectorStore(settings.database_path)

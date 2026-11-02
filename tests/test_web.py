@@ -1,12 +1,25 @@
 import asyncio
+import re
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from gitcontext import indexer
 from gitcontext.ingest.errors import GitHubAPIError
 from gitcontext.ingest.remote import RemoteRepository
-from gitcontext.web import create_app
+from gitcontext.records import ParsedBlock
+from gitcontext.vector_store import VectorStore
+from gitcontext.web import _RATE_EVENTS, _REPOSITORY_LOCKS, create_app
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_events():
+    _RATE_EVENTS.clear()
+    yield
+    _RATE_EVENTS.clear()
 
 
 def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -> None:
@@ -45,18 +58,11 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             home = await client.get("/")
             assert home.status_code == 200
-            assert "Understand an unfamiliar codebase." in home.text
-            assert 'class="brand-lockup" href="/" aria-label="GitContext home"' in home.text
-            assert 'aria-label="Main navigation"' in home.text
-            assert 'id="menu-toggle"' in home.text
-            assert 'role="tablist" aria-label="Repository workspace"' in home.text
-            assert 'data-workspace-tab="files"' in home.text
-            assert 'data-workspace-tab="architecture"' in home.text
-            assert 'data-workspace-tab="ask"' in home.text
-            assert 'class="field-label" for="repository-path"' in home.text
-            assert 'class="orbit-emblem" viewBox="0 0 200 130"' in home.text
-            assert home.text.count('M15 14v16M22 11v21M29 14v16') == 2
-            assert (await client.get("/static/app.js")).status_code == 200
+            assert '<div id="app-root"></div>' in home.text
+            script = re.search(r'src="([^"]+\.js)"', home.text)
+            assert script
+            assert (await client.get(script.group(1))).status_code == 200
+            assert (await client.get("/static/app.css?v=16")).status_code == 200
             scan = await client.post(
                 "/api/scan", json={"path": "https://github.com/owner/repo"}
             )
@@ -215,5 +221,114 @@ def test_web_repository_upstream_failures_return_gateway_errors(monkeypatch) -> 
         for response in responses:
             assert response.status_code == 502
             assert "private upstream details" not in response.text
+
+    asyncio.run(workflow())
+
+
+def test_web_ask_hides_internal_answer_errors(tmp_path: Path, monkeypatch) -> None:
+    database = tmp_path / "index.sqlite"
+    monkeypatch.setenv("GITCONTEXT_DATABASE", str(database))
+    monkeypatch.setenv("GITCONTEXT_INGEST_GITHUB", "false")
+    store = VectorStore(database)
+    store.replace_all([ParsedBlock("auth.py", 1, 2, "login", "def login(): pass")])
+    monkeypatch.setattr(
+        "gitcontext.web.remote_repository_is_stale", lambda *args, **kwargs: (
+            False,
+            RemoteRepository(
+                "owner/repo", "https://github.com/owner/repo", "main", "abc123", tmp_path
+            ),
+        )
+    )
+
+    def fail_answer(*args, **kwargs):
+        raise RuntimeError("private provider response and secret detail")
+
+    monkeypatch.setattr("gitcontext.web.answer_question", fail_answer)
+
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/ask",
+                json={
+                    "path": "https://github.com/owner/repo",
+                    "question": "Where is login?",
+                },
+            )
+        assert response.status_code == 500
+        assert response.json() == {"detail": "Could not answer from this repository."}
+        assert "private provider response" not in response.text
+
+    asyncio.run(workflow())
+
+
+def test_web_index_rate_limit_returns_429(monkeypatch) -> None:
+    _RATE_EVENTS.clear()
+
+    def reject_index(*args, **kwargs):
+        raise ValueError("fixture stops before indexing")
+
+    monkeypatch.setattr("gitcontext.web.index_remote_repository", reject_index)
+
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            for _ in range(5):
+                response = await client.post(
+                    "/api/index", json={"path": "https://github.com/owner/repo"}
+                )
+                assert response.status_code == 400
+            limited = await client.post(
+                "/api/index", json={"path": "https://github.com/owner/repo"}
+            )
+        assert limited.status_code == 429
+        assert "Rate limit reached for index" in limited.json()["detail"]
+        assert int(limited.headers["retry-after"]) > 0
+
+    asyncio.run(workflow())
+
+
+def test_web_concurrent_index_for_same_repository_returns_409(monkeypatch, tmp_path: Path) -> None:
+    _RATE_EVENTS.clear()
+    key = "owner/repo"
+    _REPOSITORY_LOCKS.pop(key, None)
+    started = threading.Event()
+    finish = threading.Event()
+
+    def slow_index(*args, **kwargs):
+        started.set()
+        assert finish.wait(timeout=3)
+        return SimpleNamespace(
+            repository=tmp_path,
+            source_files=1,
+            skipped_files=0,
+            chunks=1,
+            semantic_embeddings=False,
+            database_path=tmp_path / "index.sqlite",
+            changed_files=1,
+            removed_files=0,
+            commits=0,
+            pull_requests=0,
+            incidents=0,
+            warnings=[],
+        )
+
+    monkeypatch.setattr("gitcontext.web.index_remote_repository", slow_index)
+
+    async def workflow() -> None:
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            first = asyncio.create_task(client.post(
+                "/api/index", json={"path": "https://github.com/Owner/Repo"}
+            ))
+            assert await asyncio.to_thread(started.wait, 1)
+            second = await client.post(
+                "/api/index", json={"path": "https://github.com/owner/repo"}
+            )
+            finish.set()
+            first_response = await first
+        assert first_response.status_code == 200
+        assert second.status_code == 409
+        assert "already running" in second.json()["detail"]
 
     asyncio.run(workflow())

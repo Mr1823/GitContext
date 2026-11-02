@@ -8,7 +8,7 @@ from git.exc import GitCommandError, InvalidGitRepositoryError
 from rich.console import Console
 from rich.table import Table
 
-from gitcontext.answer import answer_question
+from gitcontext.answer import answer_question, ensure_supported_citations
 from gitcontext.config import Settings
 from gitcontext.diagram import generate_diagram, source_extension
 from gitcontext.evaluation import (
@@ -318,7 +318,9 @@ def ask(
         results, elapsed_ms = retrieve_with_metrics(
             question, store, top_k, settings.embedding_model, settings.reranker_model
         )
-        response = answer_question(question, results, settings)
+        response = ensure_supported_citations(
+            answer_question(question, results, settings), results
+        )
     except (OSError, RuntimeError, ValueError) as error:
         console.print(f"[bold red]Question failed:[/bold red] {error}")
         raise typer.Exit(code=1) from error

@@ -7,6 +7,7 @@ import shutil
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -18,6 +19,57 @@ GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MAX_SOURCE_FILE_BYTES = 5 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 250 * 1024 * 1024
 MAX_SNAPSHOT_FILES = 25_000
+MAX_REPO_MB_ENV = "GITCONTEXT_MAX_REPO_MB"
+MAX_FILES_ENV = "GITCONTEXT_MAX_FILES"
+
+
+def _positive_limit(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer.") from error
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
+def _check_repository_size(size_kb: Any) -> None:
+    max_mb = _positive_limit(MAX_REPO_MB_ENV, 100)
+    if not isinstance(size_kb, int) or size_kb < 0:
+        raise RuntimeError("GitHub did not return a valid repository size.")
+    if size_kb > max_mb * 1024:
+        raise ValueError(
+            f"GitHub repository is {size_kb / 1024:.1f} MB; "
+            f"the configured limit is {max_mb} MB ({MAX_REPO_MB_ENV})."
+        )
+
+
+def _check_repository_blob_count(repository: "RemoteRepository", token: str | None) -> int:
+    max_files = _positive_limit(MAX_FILES_ENV, 1500)
+    tree = _github_json(
+        f"https://api.github.com/repos/{repository.slug}/git/trees/"
+        f"{quote(repository.head_sha, safe='')}?recursive=1",
+        token,
+    )
+    if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
+        raise TypeError("GitHub returned an unexpected repository tree.")
+    if any(not isinstance(item, dict) for item in tree["tree"]):
+        raise TypeError("GitHub returned an unexpected repository tree entry.")
+    blob_count = sum(item.get("type") == "blob" for item in tree["tree"])
+    if blob_count > max_files:
+        raise ValueError(
+            f"GitHub repository contains {blob_count} files; "
+            f"the configured limit is {max_files} ({MAX_FILES_ENV})."
+        )
+    if tree.get("truncated"):
+        raise ValueError(
+            f"GitHub could not verify the complete file count within the "
+            f"configured limit ({MAX_FILES_ENV}={max_files})."
+        )
+    return blob_count
 
 
 @dataclass(frozen=True)
@@ -61,6 +113,9 @@ def _cache_root() -> Path:
     configured = os.getenv("GITCONTEXT_REMOTE_CACHE")
     if configured:
         return Path(configured).expanduser().resolve()
+    data_dir = os.getenv("GITCONTEXT_DATA_DIR")
+    if data_dir:
+        return (Path(data_dir).expanduser() / "remotes").resolve()
     base = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")).expanduser()
     return (base / "gitcontext" / "remotes").resolve()
 
@@ -118,6 +173,7 @@ def get_remote_repository(
         raise TypeError("GitHub did not return repository details.")
     if public_only and metadata.get("private") is not False:
         raise ValueError("This interface accepts public GitHub repositories only.")
+    _check_repository_size(metadata.get("size"))
     branch = metadata.get("default_branch")
     if not isinstance(branch, str) or not branch:
         raise RuntimeError("GitHub repository has no default branch.")
@@ -149,13 +205,26 @@ def ensure_remote_snapshot(
     if not force:
         try:
             saved = json.loads(marker.read_text(encoding="utf-8"))
-            if saved.get("head_sha") == repository.head_sha:
-                from gitcontext.ingest.repository import scan_repository
-
-                if scan_repository(root):
-                    return root
         except (OSError, ValueError):
-            pass
+            saved = None
+        if isinstance(saved, dict) and saved.get("head_sha") == repository.head_sha:
+            from gitcontext.ingest.repository import scan_repository
+
+            if scan_repository(root):
+                saved_blob_count = saved.get("blob_count")
+                if isinstance(saved_blob_count, int):
+                    max_files = _positive_limit(MAX_FILES_ENV, 1500)
+                    if saved_blob_count > max_files:
+                        raise ValueError(
+                            f"GitHub repository contains {saved_blob_count} files; "
+                            f"the configured limit is {max_files} ({MAX_FILES_ENV})."
+                        )
+                    return root
+                saved["blob_count"] = _check_repository_blob_count(repository, token)
+                marker.write_text(json.dumps(saved), encoding="utf-8")
+                return root
+
+    blob_count = _check_repository_blob_count(repository, token)
 
     root.mkdir(parents=True, exist_ok=True)
     for child in root.iterdir():
@@ -228,6 +297,7 @@ def ensure_remote_snapshot(
             "url": repository.url,
             "branch": repository.branch,
             "head_sha": repository.head_sha,
+            "blob_count": blob_count,
         }),
         encoding="utf-8",
     )

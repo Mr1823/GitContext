@@ -3,7 +3,7 @@ from pathlib import Path
 from git import Repo
 from typer.testing import CliRunner
 
-from gitcontext.answer import answer_question
+from gitcontext.answer import answer_question, ensure_supported_citations
 from gitcontext.chunking import chunk_file
 from gitcontext.cli import app
 from gitcontext.config import Settings
@@ -13,6 +13,18 @@ from gitcontext.ingest.history import commit_documents, file_provenance
 from gitcontext.ingest.parser import parse_file
 from gitcontext.retrieval import retrieve
 from gitcontext.vector_store import VectorStore
+
+
+def test_data_dir_persists_indexes_and_qdrant_paths(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("GITCONTEXT_DATABASE", raising=False)
+    monkeypatch.setenv("GITCONTEXT_DATA_DIR", str(tmp_path / "data"))
+    first = Settings.for_repository(tmp_path / "repo-one")
+    second = Settings.for_repository(tmp_path / "repo-two")
+
+    assert first.database_path.is_relative_to(tmp_path / "data")
+    assert first.database_path != second.database_path
+    assert first.database_path.name == "index.sqlite"
+    assert first.database_path.parent.name != second.database_path.parent.name
 
 
 def test_python_parser_extracts_named_declarations(tmp_path: Path) -> None:
@@ -138,6 +150,42 @@ def test_indexing_read_failure_does_not_report_success_or_change_existing_index(
     assert store.all() == previous_chunks
 
 
+def test_indexing_later_read_failure_leaves_partial_index_detectably_stale(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    first_file = repository / "a.py"
+    later_file = repository / "b.py"
+    first_file.write_text("def first():\n    return 1\n")
+    later_file.write_text("def later():\n    return 1\n")
+    monkeypatch.setenv("GITCONTEXT_DATABASE", str(tmp_path / "index.sqlite"))
+    index_repository(repository)
+    first_file.write_text("def first():\n    return 2\n")
+    later_file.write_text("def later():\n    return 2\n")
+    store = VectorStore(tmp_path / "index.sqlite")
+    original_read_bytes = Path.read_bytes
+
+    def fail_for_later_file(path: Path) -> bytes:
+        if path == later_file:
+            raise PermissionError("read denied")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_for_later_file)
+
+    try:
+        index_repository(repository)
+    except OSError as error:
+        assert "Could not read repository file: b.py" in str(error)
+    else:
+        raise AssertionError("The later file read failure must fail indexing")
+
+    indexed = {item["path"]: item["content"] for item in store.all()}
+    assert "return 2" in indexed["a.py"]
+    assert "return 1" in indexed["b.py"]
+    assert repository_is_stale(repository)
+
+
 def test_large_block_is_split_with_line_overlap(tmp_path: Path) -> None:
     source = tmp_path / "long.js"
     source.write_text("\n".join(f"line_{i}" for i in range(120)))
@@ -190,6 +238,25 @@ def test_answer_without_api_key_returns_cited_evidence(tmp_path: Path, monkeypat
 
     assert "auth.py:4-6" in answer
     assert "def login()" in answer
+
+
+def test_citation_guard_replaces_missing_or_unsupported_llm_citations() -> None:
+    evidence = [{
+        "path": "src/auth.py", "start_line": 4, "end_line": 6,
+        "content": "def login():\n    return True",
+    }]
+
+    assert ensure_supported_citations("Login is in src/auth.py:4-6.", evidence).startswith(
+        "Login is in"
+    )
+    fallback = ensure_supported_citations(
+        "Login is in private.py:1-2.", evidence
+    )
+    assert "src/auth.py:4-6" in fallback
+    assert "private.py" not in fallback
+    assert ensure_supported_citations("Uncited claim.", evidence).startswith(
+        "Relevant code found:"
+    )
 
 
 def test_question_cli_workflow_uses_repository_local_index(tmp_path: Path, monkeypatch) -> None:

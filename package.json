@@ -1,0 +1,15 @@
+{
+  "name": "gitcontext",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace gitcontext-web",
+    "build": "npm run build --workspace gitcontext-web"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

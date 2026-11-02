@@ -28,3 +28,6 @@ htmlcov/
 # Build artifacts
 build/
 dist/
+node_modules/
+!src/gitcontext/static/build/
+!src/gitcontext/static/build/**
