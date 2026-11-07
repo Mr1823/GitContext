@@ -118,6 +118,25 @@ def test_indexing_only_rebuilds_changed_and_removed_files(tmp_path: Path, monkey
     assert not repository_is_stale(repository)
 
 
+def test_indexing_reports_source_file_progress(tmp_path: Path, monkeypatch) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    (repository / "main.py").write_text("def run_app():\n    return True\n")
+    monkeypatch.setenv("GITCONTEXT_DATABASE", str(tmp_path / "progress.sqlite"))
+    reports = []
+
+    summary = index_repository(
+        repository,
+        progress_callback=lambda stage, processed, total, current_file: reports.append(
+            (stage, processed, total, current_file)
+        ),
+    )
+
+    assert summary.source_files == 1
+    assert ("Indexing source files", 1, 1, "main.py") in reports
+    assert reports[-1][0] == "Saving the search index"
+
+
 def test_indexing_read_failure_does_not_report_success_or_change_existing_index(
     tmp_path: Path, monkeypatch
 ) -> None:

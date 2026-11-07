@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { sileo } from "sileo";
 
 const githubUrlPattern = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const workspaceViews = ["files", "architecture", "ask"];
 
 async function api(route, payload) {
   const response = await fetch(route, {
@@ -52,6 +51,29 @@ function safeSvg(svgText) {
 function fileKind(path) {
   const extension = path.split(".").pop().toLowerCase();
   return ({ py: "PY", js: "JS", jsx: "JS", ts: "TS", tsx: "TS", java: "JV" })[extension] || "SRC";
+}
+
+function repositorySuggestions(files = []) {
+  const paths = [...new Set(files)].sort();
+  const groups = [
+    { match: /(^|\/)(main|app|cli|server|index)\.(py|js|jsx|ts|tsx)$/i, question: (path) => `How does ${path} start or expose the application?` },
+    { match: /(auth|login|session|permission|security)/i, question: (path) => `How does ${path} handle authentication or access?` },
+    { match: /(route|api|web|controller|endpoint)/i, question: (path) => `How does ${path} handle repository requests?` },
+    { match: /(retriev|search|embed|vector|index)/i, question: (path) => `How does ${path} find and prepare code context?` },
+    { match: /(parse|chunk|diagram|ingest)/i, question: (path) => `What does ${path} extract from the repository?` },
+  ];
+  const suggestions = [];
+  for (const group of groups) {
+    const path = paths.find((candidate) => group.match.test(candidate));
+    if (path) suggestions.push(group.question(path));
+    if (suggestions.length === 3) break;
+  }
+  for (const path of paths) {
+    if (suggestions.length === 3) break;
+    const suggestion = `What does ${path} do in this repository?`;
+    if (!suggestions.includes(suggestion)) suggestions.push(suggestion);
+  }
+  return suggestions;
 }
 
 function InlineText({ text }) {
@@ -150,7 +172,7 @@ function OrbitEmblem() {
   );
 }
 
-function Message({ message }) {
+function Message({ message, onOpenSource }) {
   const assistant = message.role === "assistant";
   return (
     <div className={`message ${message.role}`}>
@@ -176,6 +198,7 @@ function Message({ message }) {
               <details className="source-card" key={`${source.path}-${source.start_line}-${index}`}>
                 <summary>{source.path}{range}</summary>
                 <pre><code>{source.content || ""}</code></pre>
+                <button className="source-open-button" type="button" onClick={() => onOpenSource(source)}>Open file in Files panel</button>
                 {openUrl && <a className="citation-open-link" href={openUrl} target="_blank" rel="noopener noreferrer">Open source on GitHub</a>}
               </details>
             );
@@ -197,8 +220,24 @@ export default function App() {
   const [diagramBusy, setDiagramBusy] = useState(false);
   const [questionBusy, setQuestionBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("files");
-  const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 780px)").matches);
+  const [mobileTab, setMobileTab] = useState("chat");
+  const [panelTab, setPanelTab] = useState("files");
+  const [sidePanelOpen, setSidePanelOpen] = useState(() => {
+    const saved = window.localStorage.getItem("gitcontext-side-panel-open");
+    return saved === null ? window.innerWidth >= 1024 : saved === "true";
+  });
+  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+    const saved = Number(window.localStorage.getItem("gitcontext-side-panel-width"));
+    return Number.isFinite(saved) && saved >= 280 && saved <= 560 ? saved : 360;
+  });
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 600px)").matches);
+  const [isTablet, setIsTablet] = useState(() => window.matchMedia("(min-width: 601px) and (max-width: 1023px)").matches);
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [changeRepositoryOpen, setChangeRepositoryOpen] = useState(false);
+  const [diagramFocused, setDiagramFocused] = useState(false);
+  const [diagramZoom, setDiagramZoom] = useState(1);
+  const [indexProgress, setIndexProgress] = useState({ status: "idle", stage: "Waiting to index", processed: 0, total: 0, current_file: "" });
   const [fileFilter, setFileFilter] = useState("");
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState([]);
@@ -208,21 +247,54 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash || "#repository");
   const repoInputRef = useRef(null);
   const indexButtonRef = useRef(null);
+  const panelToggleRef = useRef(null);
   const questionInputRef = useRef(null);
   const chatBodyRef = useRef(null);
   const diagramOutputRef = useRef(null);
+  const workspaceRef = useRef(null);
   const mermaidRef = useRef(null);
   const diagramRenderCount = useRef(0);
 
   const activeRepository = repository?.repository || "";
   const indexed = Boolean(repository?.indexed_chunks);
   const visibleFiles = useMemo(() => (repository?.files || []).filter((path) => path.toLowerCase().includes(fileFilter.toLowerCase())), [repository, fileFilter]);
+  const suggestedQuestions = useMemo(() => repositorySuggestions(repository?.files || []), [repository]);
+  const currentWorkflowStep = !repository ? "connect" : indexBusy ? "index" : !indexed ? "index" : messages.length ? "ask" : "explore";
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 780px)");
-    const change = () => setIsMobile(media.matches);
-    media.addEventListener("change", change);
-    return () => media.removeEventListener("change", change);
+    const mobile = window.matchMedia("(max-width: 600px)");
+    const tablet = window.matchMedia("(min-width: 601px) and (max-width: 1023px)");
+    const change = () => { setIsMobile(mobile.matches); setIsTablet(tablet.matches); };
+    mobile.addEventListener("change", change);
+    tablet.addEventListener("change", change);
+    return () => { mobile.removeEventListener("change", change); tablet.removeEventListener("change", change); };
+  }, []);
+
+  useEffect(() => { window.localStorage.setItem("gitcontext-side-panel-open", String(sidePanelOpen)); }, [sidePanelOpen]);
+  useEffect(() => { window.localStorage.setItem("gitcontext-side-panel-width", String(sidePanelWidth)); }, [sidePanelWidth]);
+
+  useEffect(() => {
+    if (!indexBusy || !activeRepository) return undefined;
+    let active = true;
+    let timer;
+    const poll = async () => {
+      try {
+        const progress = await apiGet(`/api/index/progress?repo=${encodeURIComponent(activeRepository)}`);
+        if (active) setIndexProgress(progress);
+      } catch { /* The index request itself reports any failure. */ }
+      if (active) timer = window.setTimeout(poll, 650);
+    };
+    poll();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [indexBusy, activeRepository]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("chat-input-focused", document.activeElement?.id === "question-input");
+    const onFocus = (event) => document.documentElement.classList.toggle("chat-input-focused", event.target?.id === "question-input");
+    const onBlur = (event) => { if (event.target?.id === "question-input") document.documentElement.classList.remove("chat-input-focused"); };
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("focusout", onBlur);
+    return () => { document.removeEventListener("focusin", onFocus); document.removeEventListener("focusout", onBlur); document.documentElement.classList.remove("chat-input-focused"); };
   }, []);
 
   useEffect(() => {
@@ -249,6 +321,27 @@ export default function App() {
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!diagramFocused) return undefined;
+    const closeOnEscape = (event) => { if (event.key === "Escape") setDiagramFocused(false); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [diagramFocused]);
+
+  useEffect(() => {
+    const svg = diagramOutputRef.current?.querySelector("svg");
+    if (!svg || !diagram?.nodes) return;
+    svg.querySelectorAll("g.node").forEach((element) => {
+      const id = element.id.match(/flowchart-(n[0-9]+)-/)?.[1];
+      const node = diagram.nodes.find((item) => item.id === id);
+      if (node?.files?.length) {
+        element.setAttribute("tabindex", "0");
+        element.setAttribute("role", "button");
+        element.setAttribute("aria-label", `Open ${node.files[0]} in Files panel`);
+      }
+    });
+  }, [diagramMarkup, diagram]);
 
   useEffect(() => {
     const body = chatBodyRef.current;
@@ -290,7 +383,10 @@ export default function App() {
     setDiagramMarkup("");
     setDiagramStatus("Build the search index to generate a diagram.");
     setQuestion("");
-    setActiveTab("files");
+    setMobileTab("chat");
+    setPanelTab("files");
+    setSelectedFile(null);
+    setChangeRepositoryOpen(false);
   }
 
   async function connectRepository(event) {
@@ -309,7 +405,11 @@ export default function App() {
       setRepository(result);
       setRepositoryStatus(result);
       setFileFilter("");
-      setActiveTab("files");
+      setMobileTab("chat");
+      setPanelTab("files");
+      setSidePanelOpen(true);
+      setSelectedFile(null);
+      setChangeRepositoryOpen(false);
       notify("success", "Repository connected", `${result.count} supported source files found.`);
       scrollTo(document.getElementById("repository-panel"));
     } catch (error) {
@@ -329,6 +429,7 @@ export default function App() {
     if (!activeRepository || indexBusy) return;
     const previousStatus = indexStatus;
     setIndexBusy(true);
+    setIndexProgress({ status: "running", stage: "Preparing repository index", processed: 0, total: repository?.files?.length || 0, current_file: "" });
     setIndexStatus("Building the search index…");
     setRepoError("");
     setWarnings([]);
@@ -344,13 +445,17 @@ export default function App() {
       }));
       setRepositoryStatus(result);
       setWarnings(result.warnings || []);
-      setActiveTab("files");
+      setMobileTab("chat");
+      setPanelTab("files");
+      setChangeRepositoryOpen(false);
       resetDiagram(result.chunks > 0);
+      setIndexProgress({ status: "complete", stage: "Index complete", processed: result.source_files, total: result.source_files, current_file: "" });
       notify("success", "Search index ready", `${result.source_files} files · ${result.chunks} chunks`);
       if (result.warnings?.length) notify("warning", "Some repository context was skipped", result.warnings.join(" "));
     } catch (error) {
+      setIndexProgress((current) => ({ ...current, status: "error", stage: "Indexing failed", error: error.message }));
       setRepoError(error.message);
-      setIndexStatus(indexed ? "Index update failed. The current index is still available." : "Indexing failed. Resolve the error above, then try again.");
+      setIndexStatus(indexed ? "Reindexing failed. Your previous index is still available; review the error and retry." : "Indexing failed. Review the error and retry the index.");
       if (previousStatus && indexed) setIndexStatus((status) => `${status} ${previousStatus}`);
       notify("error", "Indexing failed", error.message);
     } finally {
@@ -555,22 +660,55 @@ export default function App() {
     }
   }
 
-  function onWorkspaceKeyDown(event, index) {
-    let next = index;
-    if (event.key === "ArrowRight") next = (index + 1) % workspaceViews.length;
-    else if (event.key === "ArrowLeft") next = (index + workspaceViews.length - 1) % workspaceViews.length;
-    else if (event.key === "Home") next = 0;
-    else if (event.key === "End") next = workspaceViews.length - 1;
-    else return;
-    event.preventDefault();
-    const view = workspaceViews[next];
-    setActiveTab(view);
-    document.getElementById(`workspace-tab-${view}`)?.focus();
+  async function openRepositoryFile(path, source = null) {
+    setPanelTab("files");
+    setSidePanelOpen(true);
+    setSelectedFile({ path, start_line: source?.start_line, end_line: source?.end_line, loading: true, content: "" });
+    if (isMobile) setMobileTab("files");
+    try {
+      const result = await apiGet(`/api/file?repo=${encodeURIComponent(activeRepository)}&path=${encodeURIComponent(path)}`);
+      setSelectedFile({ ...result, start_line: source?.start_line, end_line: source?.end_line, loading: false });
+    } catch (error) {
+      setSelectedFile(null);
+      notify("error", "Could not open source file", error.message);
+    }
   }
 
-  const emptyChatText = indexed
-    ? "Choose an example or ask about a file, function, or request flow."
-    : "Build the search index to enable questions. Answers include source paths and line numbers.";
+  function handleDiagramNodeClick(event) {
+    const nodeElement = event.target.closest?.("g.node");
+    if (!nodeElement) return;
+    const nodeId = nodeElement.id.match(/flowchart-(n[0-9]+)-/)?.[1];
+    const node = diagram?.nodes?.find((item) => item.id === nodeId);
+    if (node?.files?.[0]) openRepositoryFile(node.files[0]);
+  }
+
+  function resizeSidePanel(event) {
+    if (!isResizingPanel || !workspaceRef.current) return;
+    const bounds = workspaceRef.current.getBoundingClientRect();
+    setSidePanelWidth(Math.max(280, Math.min(560, Math.round(bounds.right - event.clientX))));
+  }
+
+  function onWorkspaceKeyDown(event, index, tabs, selectTab, idPrefix) {
+    let next = index;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (index + 1) % tabs.length;
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (index + tabs.length - 1) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    selectTab(tabs[next].id);
+    document.getElementById(`${idPrefix}-${tabs[next].id}`)?.focus();
+  }
+
+  function closeRepositoryPanel() {
+    if (isMobile) {
+      setMobileTab("chat");
+      window.requestAnimationFrame(() => document.getElementById("mobile-tab-chat")?.focus());
+    } else {
+      setSidePanelOpen(false);
+      window.requestAnimationFrame(() => panelToggleRef.current?.focus());
+    }
+  }
 
   return (
     <>
@@ -595,21 +733,34 @@ export default function App() {
                   setIndexStatus(item.requires === "architecture" ? "Build the search index before generating the architecture diagram." : "Build the search index before asking questions.");
                   indexButtonRef.current?.focus();
                   scrollTo(indexButtonRef.current, "center");
-                } else if (item.requires) setActiveTab(item.requires);
+                } else if (item.requires === "architecture") {
+                  setPanelTab("architecture");
+                  setSidePanelOpen(true);
+                  if (!diagram && indexed) generateDiagram();
+                  if (isMobile) setMobileTab("diagram");
+                } else if (item.requires === "ask") {
+                  if (isMobile) setMobileTab("chat");
+                  else questionInputRef.current?.focus();
+                }
                 if (isMobile) setMenuOpen(false);
               }}>{item.label}</a>
             ))}
-            <a className="button button-primary header-cta" href="#repository" onClick={() => isMobile && setMenuOpen(false)}>Connect repository</a>
+            <a className="button button-primary header-cta" href="#repository" onClick={() => { setChangeRepositoryOpen(true); if (isMobile) setMenuOpen(false); }}>Connect repository</a>
           </nav>
         </header>
 
-        <main id="main-content" className="content-wrap">
-          <section className="welcome-row">
-            <div className="welcome-copy"><div className="eyebrow">CODEBASE INTELLIGENCE</div><h1>Understand an unfamiliar codebase.</h1><p className="subtitle">Inspect a public GitHub repository's architecture and source files, then ask questions with source citations.</p><p className={`index-status${indexStatus ? "" : " hidden"}`} aria-live="polite">{indexStatus}</p></div>
+        <main id="main-content" className={`content-wrap${repository ? " has-repository" : ""}`}>
+          {!repository && <section className="welcome-row">
+            <div className="welcome-copy"><div className="eyebrow">CODEBASE INTELLIGENCE</div><h1>Understand an unfamiliar codebase.</h1><p className="subtitle">Inspect a public GitHub repository's architecture and source files, then ask questions with source citations.</p></div>
             <OrbitEmblem />
-          </section>
+          </section>}
 
-          <section id="repository" className="repo-card panel" aria-labelledby="connect-title">
+          {repository && <section className="repo-context-bar panel" aria-label="Current repository">
+            <div><span className="eyebrow small-eyebrow">CURRENT REPOSITORY</span><strong>{activeRepository.split("/").filter(Boolean).pop()}</strong><span className="repo-path">{activeRepository}</span></div>
+            <button className="button button-secondary" type="button" onClick={() => setChangeRepositoryOpen((open) => !open)} aria-expanded={changeRepositoryOpen}>{changeRepositoryOpen ? "Close" : "Change repository"}</button>
+          </section>}
+
+          {(!repository || changeRepositoryOpen) && <section id="repository" className="repo-card panel" aria-labelledby="connect-title">
             <div className="section-heading"><div><h2 id="connect-title">Connect a public repository</h2><p>Paste a GitHub repository URL to inspect its source files.</p></div></div>
             <form className="repo-form" onSubmit={connectRepository}>
               <label className="field-label" htmlFor="repository-path">GitHub repository URL</label>
@@ -617,48 +768,79 @@ export default function App() {
                 <button className="button button-primary" id="scan-button" type="submit" disabled={repoBusy}><span>{repoBusy ? "Checking repository…" : "Connect repository"}</span></button></div>
             </form>
             <p className="form-hint" id="repository-hint">Public GitHub repositories only. Connecting checks the repository and lists supported source files.</p>
+            {indexStatus && <p className="connection-status" role="status" aria-live="polite">{indexStatus}</p>}
             {repoError && <div id="repo-error" className="notice notice-error" role="alert">{repoError}</div>}
-          </section>
-
-          {repository && <section id="repository-panel" className="workspace-grid">
-            <div className="workspace-tabs" role="tablist" aria-label="Repository workspace">
-              {[{ id: "files", label: "Files" }, { id: "architecture", label: "Architecture" }, { id: "ask", label: "Ask" }].map((tab, index) => <button key={tab.id} id={`workspace-tab-${tab.id}`} type="button" role="tab" aria-controls={tab.id === "files" ? "workspace-panel-files" : tab.id === "ask" ? "repository-qa" : "architecture"} aria-selected={activeTab === tab.id} data-workspace-tab={tab.id} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)} onKeyDown={(event) => onWorkspaceKeyDown(event, index)}>{tab.label}</button>)}
-            </div>
-
-            <section id="architecture" className="panel diagram-panel" role="tabpanel" aria-labelledby="workspace-tab-architecture" tabIndex="0" hidden={isMobile && activeTab !== "architecture"}>
-              <div className="diagram-heading"><div><div className="eyebrow small-eyebrow">REPOSITORY MAP</div><h2 id="diagram-title">Architecture diagram</h2><p>Import relationships from the current index.</p></div><div className="diagram-controls">
-                <button className="button button-primary" id="diagram-button" type="button" disabled={!indexed || diagramBusy} aria-busy={diagramBusy} onClick={generateDiagram}><span>{diagramBusy ? "Generating…" : diagram ? "Refresh diagram" : "Generate diagram"}</span></button>
-                {diagram && <div className="diagram-downloads" id="diagram-downloads" role="group" aria-label="Download architecture diagram"><button className="button button-secondary" type="button" onClick={() => downloadDiagram("png")}>Download PNG</button><button className="button button-secondary" type="button" onClick={() => downloadDiagram("jpeg")}>Download JPEG</button><button className="button button-secondary" type="button" onClick={() => downloadDiagram("svg")}>Download SVG</button><button className="button button-secondary" type="button" onClick={() => downloadDiagram("mermaid")}>Download Mermaid</button><button className="button button-secondary" type="button" onClick={copyDiagramMermaid}>Copy Mermaid</button></div>}
-              </div></div>
-              <p id="diagram-status" className="diagram-status" aria-live="polite">{diagramStatus}</p>
-              <div id="diagram-output" ref={diagramOutputRef} className={`diagram-output${diagramMarkup || diagram?.mermaid ? "" : " hidden"}`} role="region" aria-label="Repository architecture diagram" tabIndex="0">
-                {diagramMarkup ? <div dangerouslySetInnerHTML={{ __html: diagramMarkup }} /> : diagram?.mermaid && <pre className="diagram-source-fallback" role="alert"><code>{diagram.mermaid}</code></pre>}
-              </div>
-              {diagram?.citations?.length > 0 && <details id="diagram-sources" className="diagram-sources"><summary>Source references</summary><ul>{diagram.citations.map((citation, index) => <li key={`${citation.path}-${citation.start_line}-${index}`}><code>{citation.start_line ? `${citation.path}:${citation.start_line}` : citation.path}</code></li>)}</ul></details>}
-            </section>
-
-            <div className="left-column" id="workspace-panel-files" role="tabpanel" aria-labelledby="workspace-tab-files" tabIndex="0" hidden={isMobile && activeTab !== "files"}>
-              <section className="panel repo-summary"><div className="panel-header"><div><div className="eyebrow small-eyebrow">CURRENT REPOSITORY</div><h2 id="repo-name">{activeRepository.split(/[\\/]/).filter(Boolean).pop() || activeRepository}</h2></div><span className="git-badge" id="git-badge">{repository.remote ? "GitHub repository" : ""}</span></div>
-                <div className="repo-path" id="repo-full-path">{activeRepository}</div><div className="stats-row"><div><strong id="file-count">{repository.files?.length || 0}</strong><span>source files</span></div><div><strong id="chunk-count">{repository.indexed_chunks || 0}</strong><span>indexed chunks</span></div></div>
-                <button className="button button-secondary full-width" id="index-button" ref={indexButtonRef} type="button" onClick={buildIndex} disabled={indexBusy} aria-busy={indexBusy}><span>{indexBusy ? "Indexing…" : indexed ? "Rebuild search index" : "Build search index"}</span></button>
-                {indexBusy && <div id="index-progress" className="progress-wrap" role="status" aria-live="polite" aria-busy="true"><div className="progress-track" aria-hidden="true"><span></span></div><span>Reading repository files and building the index…</span></div>}
-                {warnings.length > 0 && <div id="index-warnings" className="notice notice-warning" role="status">{warnings.join(" ")}</div>}
-              </section>
-
-              <section className="panel files-panel"><div className="files-heading"><div><h2>Source files</h2><p id="file-subtitle">{repository.files?.length || 0} supported source {(repository.files?.length || 0) === 1 ? "file" : "files"}</p></div><span className="file-count-pill" id="file-pill">{repository.files?.length || 0}</span></div>
-                <div className="file-search"><input id="file-filter" type="search" placeholder="Filter repository files" aria-label="Filter repository files" value={fileFilter} onChange={(event) => setFileFilter(event.target.value)} /></div>
-                <div id="file-list" className="file-list">{visibleFiles.length ? visibleFiles.map((path) => <div className="file-row" key={path}><span className="file-type">{fileKind(path)}</span><span title={path}>{path}</span></div>) : <div className="no-files">{repository.files?.length ? "No files match this filter." : "No supported source files found in this repository."}</div>}</div>
-              </section>
-            </div>
-
-            <section id="repository-qa" className="panel chat-panel" role="tabpanel" aria-labelledby="workspace-tab-ask" tabIndex="0" hidden={isMobile && activeTab !== "ask"}>
-              <div className="chat-header"><div><h2>Ask this repository</h2><p>Answers include source paths and line numbers.</p></div></div>
-              <div className="chat-body" id="chat-body" ref={chatBodyRef} role="log" aria-live="polite" aria-relevant="additions text">
-                {messages.length === 0 ? <div className="empty-chat" id="empty-chat"><h3>Ask about this codebase</h3><p>{emptyChatText}</p><div className="suggestion-list">{["Where is the application entry point?", "How does authentication work?", "What are the main modules?"].map((item) => <button key={item} className="suggestion" type="button" data-question={item} disabled={!indexed || questionBusy} onClick={() => askQuestion(item)}>{item}</button>)}</div></div> : messages.map((message, index) => <Message key={`message-${index}`} message={message} />)}
-              </div>
-              <form className="question-form" onSubmit={(event) => { event.preventDefault(); askQuestion(); }}><label className="sr-only" htmlFor="question-input">Ask a question about this repository</label><textarea ref={questionInputRef} id="question-input" name="question" rows="1" maxLength="4000" placeholder="Ask about this repository's code" required disabled={!indexed || questionBusy} value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); askQuestion(); } }} onInput={(event) => { event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 130)}px`; }} /><button id="ask-button" className="send-button" type="submit" aria-label="Send question" disabled={!indexed || questionBusy} aria-busy={questionBusy}>{questionBusy ? "…" : "Ask"}</button><div className="input-meta"><span>Enter to send</span></div></form>
-            </section>
           </section>}
+
+          <nav className="workflow-progress" aria-label="Repository workflow">
+            <ol>{[{ id: "connect", label: "Connect" }, { id: "index", label: "Index" }, { id: "explore", label: "Explore" }, { id: "ask", label: "Ask" }].map((step, index) => {
+              const steps = ["connect", "index", "explore", "ask"];
+              const current = steps.indexOf(currentWorkflowStep);
+              return <li key={step.id} className={index < current ? "is-complete" : index === current ? "is-current" : ""} aria-current={index === current ? "step" : undefined}><span className="workflow-number">{index < current ? "✓" : index + 1}</span><span>{step.label}</span></li>;
+            })}</ol>
+          </nav>
+
+          {repository && <>
+            {!indexBusy && indexStatus && <p className="repository-workflow-status" role="status">{indexStatus}</p>}
+            {indexBusy && <div className="index-progress panel" id="index-progress" role="status" aria-live="polite" aria-busy="true">
+              <div className="index-progress-heading"><strong>{indexProgress.stage || "Preparing repository index"}</strong><span>{indexProgress.total > 0 ? `${indexProgress.processed} of ${indexProgress.total} files` : "Working through repository stages"}</span></div>
+              {indexProgress.total > 0 && <progress max={indexProgress.total} value={Math.min(indexProgress.processed, indexProgress.total)} aria-label={`${indexProgress.processed} of ${indexProgress.total} files processed`} />}
+              {indexProgress.current_file && <code>{indexProgress.current_file}</code>}
+              <p>{indexed ? "Reindexing. Your current index remains available." : "Keep this page open while GitContext prepares the index."}</p>
+            </div>}
+            {repoError && <div className="notice notice-error workspace-error" role="alert">{repoError} {indexProgress.status === "error" && "Check the message and retry indexing; if reindexing failed, your previous index is unchanged."}</div>}
+            {warnings.length > 0 && <div id="index-warnings" className="notice notice-warning" role="status">{warnings.join(" ")}</div>}
+
+            <section id="repository-panel" ref={workspaceRef} className={`workspace-area${sidePanelOpen ? " panel-open" : " panel-closed"}${isTablet && sidePanelOpen ? " tablet-panel-open" : ""}`} style={{ "--side-panel-width": `${sidePanelWidth}px` }}>
+              <section id="repository-qa" className="panel chat-panel" aria-labelledby="chat-title" hidden={isMobile && mobileTab !== "chat"}>
+                <div className="chat-header"><div><h2 id="chat-title">Ask this repository</h2><p>Answers include source paths and line numbers.</p></div><button ref={panelToggleRef} className="panel-toggle button button-secondary" type="button" onClick={() => setSidePanelOpen((open) => !open)} aria-expanded={sidePanelOpen} aria-controls={sidePanelOpen ? "repository-side-panel" : undefined}>{sidePanelOpen ? "Hide panel" : "Files and diagram"}</button></div>
+                <div className="chat-body" id="chat-body" ref={chatBodyRef} role="log" aria-live="polite" aria-relevant="additions text">
+                  {!indexed ? <div className="workspace-empty" role="status"><h3>{repository.count ? "Index this repository" : "No supported source files found"}</h3><p>{repository.count ? "Build the search index to explore files, view the architecture diagram, and ask questions." : "Connect a repository with supported source files to continue."}</p><button className="button button-primary" type="button" onClick={() => repository.count ? buildIndex() : setChangeRepositoryOpen(true)} disabled={!repository.count || indexBusy}>{indexBusy ? "Indexing…" : "Build search index"}</button></div> : messages.length === 0 ? <div className="empty-chat" id="empty-chat"><h3>Ask your first question</h3><p>Choose a question based on files in this repository, or ask in your own words.</p>{suggestedQuestions.length > 0 && <div className="suggestion-list">{suggestedQuestions.map((item) => <button key={item} className="suggestion" type="button" disabled={questionBusy || indexBusy} onClick={() => askQuestion(item)}>{item}</button>)}</div>}</div> : messages.map((message, index) => <Message key={`message-${index}`} message={message} onOpenSource={(source) => openRepositoryFile(source.path, source)} />)}
+                </div>
+                <form className="question-form" onSubmit={(event) => { event.preventDefault(); askQuestion(); }}><label className="sr-only" htmlFor="question-input">Ask a question about this repository</label><textarea ref={questionInputRef} id="question-input" name="question" rows="1" maxLength="4000" placeholder={indexed ? "Ask about this repository's code" : "Build the index to ask about this repository"} required disabled={!indexed || questionBusy || indexBusy} value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); askQuestion(); } }} onInput={(event) => { event.currentTarget.style.height = "auto"; event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 130)}px`; }} /><button id="ask-button" className="send-button" type="submit" aria-label="Send question" disabled={!indexed || questionBusy || indexBusy} aria-busy={questionBusy}>{questionBusy ? "…" : "Ask"}</button><div className="input-meta"><span>Enter to send</span></div></form>
+              </section>
+
+              {sidePanelOpen && <>
+                {isTablet && <button className="side-panel-backdrop" type="button" aria-label="Close repository panel" onClick={() => setSidePanelOpen(false)} />}
+                {!isMobile && !isTablet && <button className="panel-resizer" type="button" role="separator" aria-label="Resize repository side panel" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="560" aria-valuenow={sidePanelWidth} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setIsResizingPanel(true); }} onPointerMove={resizeSidePanel} onPointerUp={() => setIsResizingPanel(false)} onPointerCancel={() => setIsResizingPanel(false)} onKeyDown={resizePanelKeyDown} />}
+                <aside id="repository-side-panel" className={`repository-side-panel panel${diagramFocused && panelTab === "architecture" ? " is-diagram-focused" : ""}`} aria-label="Repository files and architecture" hidden={isMobile && mobileTab === "chat"}>
+                  <div className="side-panel-header">
+                    <div className="side-panel-tabs" role="tablist" aria-label="Repository side panel">
+                      {[{ id: "files", label: "Files" }, { id: "architecture", label: "Diagram" }].map((tab, index, tabs) => <button key={tab.id} id={`side-tab-${tab.id}`} type="button" role="tab" aria-controls={`side-panel-${tab.id}`} aria-selected={panelTab === tab.id} tabIndex={panelTab === tab.id ? 0 : -1} onClick={() => { setPanelTab(tab.id); setSelectedFile(null); if (tab.id === "architecture") { setDiagramFocused(false); if (!diagram && indexed) generateDiagram(); } }} onKeyDown={(event) => onWorkspaceKeyDown(event, index, tabs, setPanelTab, "side-tab")}>{tab.label}</button>)}
+                    </div>
+                    {(isTablet || isMobile) && <button className="button button-secondary side-close" type="button" onClick={closeRepositoryPanel} aria-label="Close repository panel">Close</button>}
+                  </div>
+
+                  <div id="side-panel-files" className="side-panel-content" role="tabpanel" aria-labelledby="side-tab-files" tabIndex="0" hidden={panelTab !== "files"}>
+                    {selectedFile ? <div className="file-preview">
+                      <div className="file-preview-heading"><button className="text-action" type="button" onClick={() => setSelectedFile(null)}>Back to files</button><h2>{selectedFile.path}</h2></div>
+                      {selectedFile.loading ? <p role="status">Loading file…</p> : <pre className="file-code" aria-label={`Source for ${selectedFile.path}`} tabIndex="0">{selectedFile.content.split("\n").map((line, index) => { const lineNumber = index + 1; const highlighted = lineNumber >= (selectedFile.start_line || 0) && lineNumber <= (selectedFile.end_line || 0); return <span className={highlighted ? "source-line is-cited" : "source-line"} key={lineNumber}><span className="line-number">{lineNumber}</span><code>{line || " "}</code></span>; })}</pre>}
+                    </div> : <div className="side-files-view">
+                      <div className="files-heading"><div><h2>Source files</h2><p>{repository.files?.length || 0} supported source files</p></div><span className="file-count-pill">{repository.files?.length || 0}</span></div>
+                      <label className="file-search"><span className="sr-only">Filter repository files</span><input id="file-filter" type="search" placeholder="Filter repository files" aria-label="Filter repository files" value={fileFilter} onChange={(event) => setFileFilter(event.target.value)} /></label>
+                      <div id="file-list" className="file-list">{visibleFiles.length ? visibleFiles.map((path) => <button className="file-row file-row-button" type="button" key={path} onClick={() => openRepositoryFile(path)}><span className="file-type">{fileKind(path)}</span><span title={path}>{path}</span></button>) : <div className="no-files">{repository.files?.length ? "No files match this filter." : "No supported source files found in this repository."}</div>}</div>
+                    </div>}
+                  </div>
+
+                  <div id="side-panel-architecture" className="side-panel-content side-diagram-view" role="tabpanel" aria-labelledby="side-tab-architecture" tabIndex="0" hidden={panelTab !== "architecture"}>
+                    <div className="diagram-heading"><div><div className="eyebrow small-eyebrow">REPOSITORY MAP</div><h2 id="diagram-title">Architecture diagram</h2><p>Import relationships from the current index.</p></div><div className="diagram-controls">
+                      <button className="button button-primary" id="diagram-button" type="button" disabled={!indexed || diagramBusy} aria-busy={diagramBusy} onClick={generateDiagram}><span>{diagramBusy ? "Generating…" : diagram ? "Refresh diagram" : "Generate diagram"}</span></button>
+                      {diagram && <div className="diagram-downloads" id="diagram-downloads" role="group" aria-label="Download architecture diagram"><button className="button button-secondary" type="button" onClick={() => downloadDiagram("png")}>Download PNG</button><button className="button button-secondary" type="button" onClick={() => downloadDiagram("jpeg")}>Download JPEG</button><button className="button button-secondary" type="button" onClick={() => downloadDiagram("svg")}>Download SVG</button><button className="button button-secondary" type="button" onClick={() => downloadDiagram("mermaid")}>Download Mermaid</button><button className="button button-secondary" type="button" onClick={copyDiagramMermaid}>Copy Mermaid</button></div>}
+                    </div></div>
+                    <div className="diagram-view-tools"><span id="diagram-status" className="diagram-status" aria-live="polite">{diagramStatus}</span><div className="diagram-zoom-controls" role="group" aria-label="Diagram view controls"><button className="button button-secondary" type="button" onClick={() => setDiagramZoom((zoom) => Math.max(.5, Math.round((zoom - .1) * 10) / 10))} aria-label="Zoom out" disabled={diagramZoom <= .5}>−</button><span>{Math.round(diagramZoom * 100)}%</span><button className="button button-secondary" type="button" onClick={() => setDiagramZoom((zoom) => Math.min(2, Math.round((zoom + .1) * 10) / 10))} aria-label="Zoom in" disabled={diagramZoom >= 2}>+</button><button className="button button-secondary" type="button" onClick={() => setDiagramZoom(1)}>Reset zoom</button><button className="button button-secondary" type="button" onClick={() => setDiagramFocused((focused) => !focused)} aria-expanded={diagramFocused}>{diagramFocused ? "Exit focus" : "Focus diagram"}</button></div></div>
+                    <div id="diagram-output" ref={diagramOutputRef} className={`diagram-output${diagramMarkup || diagram?.mermaid ? "" : " is-empty"}`} role="region" aria-label="Repository architecture diagram; scroll or pan to inspect" tabIndex="0" onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && event.target.closest?.("g.node")) { event.preventDefault(); handleDiagramNodeClick(event); } }}>
+                      {!diagram && <div className="diagram-empty"><p>{indexed ? "Generate a diagram to inspect repository structure." : "Build the search index before generating a diagram."}</p></div>}
+                      {diagramMarkup ? <div className="diagram-zoom-surface" onClick={handleDiagramNodeClick} style={{ width: `${diagramZoom * 100}%` }} dangerouslySetInnerHTML={{ __html: diagramMarkup }} /> : diagram?.mermaid && <pre className="diagram-source-fallback" role="alert"><code>{diagram.mermaid}</code></pre>}
+                    </div>
+                    {diagram?.citations?.length > 0 && <details id="diagram-sources" className="diagram-sources"><summary>Source references</summary><ul>{diagram.citations.map((citation, index) => <li key={`${citation.path}-${citation.start_line}-${index}`}><code>{citation.start_line ? `${citation.path}:${citation.start_line}` : citation.path}</code></li>)}</ul></details>}
+                  </div>
+                </aside>
+              </>}
+            </section>
+            <nav className="mobile-workspace-tabs" role="tablist" aria-label="Repository views">
+              {[{ id: "chat", label: "Chat" }, { id: "files", label: "Files" }, { id: "diagram", label: "Diagram" }].map((tab, index, tabs) => <button key={tab.id} id={`mobile-tab-${tab.id}`} type="button" role="tab" aria-controls={tab.id === "chat" ? "repository-qa" : "repository-side-panel"} aria-selected={mobileTab === tab.id} tabIndex={mobileTab === tab.id ? 0 : -1} onClick={() => { setMobileTab(tab.id); if (tab.id !== "chat") { setPanelTab(tab.id === "diagram" ? "architecture" : "files"); setSidePanelOpen(true); if (tab.id === "diagram" && !diagram) generateDiagram(); } }} onKeyDown={(event) => onWorkspaceKeyDown(event, index, tabs, setMobileTab, "mobile-tab")}>{tab.label}</button>)}
+            </nav>
+          </>}
         </main>
         <footer className="footer"><a className="footer-brand" href="/" aria-label="GitContext home">GitContext</a><a className="footer-link" href="https://github.com/Mr1823/GitContext">GitHub repository</a></footer>
       </div></div>

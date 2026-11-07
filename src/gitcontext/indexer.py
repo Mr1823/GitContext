@@ -1,5 +1,6 @@
 """Repository indexing workflow shared by the CLI and web interface."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -45,6 +46,20 @@ class IndexSummary:
     warnings: tuple[str, ...] = ()
 
 
+ProgressCallback = Callable[[str, int, int, str], None]
+
+
+def _report_progress(
+    callback: ProgressCallback | None,
+    stage: str,
+    processed: int = 0,
+    total: int = 0,
+    current_file: str = "",
+) -> None:
+    if callback is not None:
+        callback(stage, processed, total, current_file)
+
+
 def _embed(chunks: list[ParsedBlock], model: str | None) -> list[list[float]] | None:
     return encode_texts([chunk.content for chunk in chunks], model) if model else None
 
@@ -88,6 +103,7 @@ def index_repository(
     remote_url: str | None = None,
     remote_head_sha: str | None = None,
     sync_vectors: bool = True,
+    progress_callback: ProgressCallback | None = None,
 ) -> IndexSummary:
     """Incrementally update source files and refresh Git/GitHub context."""
     root = Path(repository).resolve()
@@ -96,6 +112,7 @@ def index_repository(
     settings = Settings.for_repository(root)
     store = VectorStore(settings.database_path)
     files = scan_repository(root)
+    _report_progress(progress_callback, "Indexing source files", 0, len(files))
     prior_hashes = store.file_hashes()
     active_model = settings.embedding_model or ""
     model_changed = store.value("embedding_model") != active_model
@@ -103,7 +120,7 @@ def index_repository(
     changed = 0
     existing_paths: set[str] = set()
 
-    for file_path in files:
+    for position, file_path in enumerate(files, start=1):
         relative_path = file_path.relative_to(root).as_posix()
         existing_paths.add(relative_path)
         try:
@@ -117,6 +134,9 @@ def index_repository(
             ) from error
         digest = sha256(content).hexdigest()
         if prior_hashes.get(relative_path) == digest and not model_changed:
+            _report_progress(
+                progress_callback, "Indexing source files", position, len(files), relative_path
+            )
             continue
         chunks = chunk_file(file_path, root, source=source)
         if not chunks:
@@ -137,7 +157,11 @@ def index_repository(
             relative_path, digest, chunks, _embed(chunks, settings.embedding_model)
         )
         changed += 1
+        _report_progress(
+            progress_callback, "Indexing source files", position, len(files), relative_path
+        )
 
+    _report_progress(progress_callback, "Indexing Git history", len(files), len(files))
     removed = store.remove_missing_files(existing_paths)
     store.set_value("embedding_model", active_model)
 
@@ -160,6 +184,7 @@ def index_repository(
         store.set_value("history_limit", str(settings.history_limit))
     warnings: list[str] = []
     if refresh_external and settings.github_enabled and repository_slug(root):
+        _report_progress(progress_callback, "Indexing pull requests and incidents", len(files), len(files))
         try:
             pull_documents, incident_documents = github_documents(root, settings.github_token)
             pulls = [passage for document in pull_documents for passage in chunk_block(document)]
@@ -176,6 +201,7 @@ def index_repository(
             warnings.append(str(error))
 
     if sync_vectors:
+        _report_progress(progress_callback, "Saving the search index", len(files), len(files))
         store.sync_qdrant()
     store.set_value("head_sha", remote_head_sha or current_head)
     indexed_records = store.all()
@@ -233,10 +259,13 @@ def index_remote_repository(
     *,
     remote: RemoteRepository | None = None,
     public_only: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> IndexSummary:
     """Fetch and index a GitHub repository without a user-side Git clone."""
     token = Settings.for_repository(Path.cwd()).github_token
+    _report_progress(progress_callback, "Checking GitHub repository")
     remote = remote or get_remote_repository(value, token, public_only=public_only)
+    _report_progress(progress_callback, "Fetching repository snapshot")
     ensure_remote_snapshot(remote, token)
     summary = index_repository(
         remote.cache_path,
@@ -244,12 +273,14 @@ def index_remote_repository(
         remote_url=remote.url,
         remote_head_sha=remote.head_sha,
         sync_vectors=False,
+        progress_callback=progress_callback,
     )
     settings = Settings.for_repository(remote.cache_path)
     store = VectorStore(settings.database_path)
     warnings = list(summary.warnings)
 
     if settings.github_enabled:
+        _report_progress(progress_callback, "Indexing commits, pull requests, and incidents", summary.source_files, summary.source_files)
         try:
             commit_limit = min(settings.history_limit, 30)
             commits = [
@@ -279,6 +310,7 @@ def index_remote_repository(
     store.set_value("remote_head_sha", remote.head_sha)
     store.set_value("remote_url", remote.url)
     store.set_value("head_sha", remote.head_sha)
+    _report_progress(progress_callback, "Saving the search index", summary.source_files, summary.source_files)
     store.sync_qdrant()
     indexed_records = store.all()
     indexed_commits = {
@@ -292,7 +324,7 @@ def index_remote_repository(
     indexed_incidents = {
         row["path"] for row in indexed_records if row["source_type"] == "incident"
     }
-    return replace(
+    result = replace(
         summary,
         repository=remote.url,
         chunks=store.count(),
@@ -301,3 +333,5 @@ def index_remote_repository(
         incidents=len(indexed_incidents),
         warnings=tuple(warnings),
     )
+    _report_progress(progress_callback, "Index complete", result.source_files, result.source_files)
+    return result

@@ -23,14 +23,15 @@ def reset_rate_events():
 
 
 def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -> None:
-    repository = tmp_path / "repo"
-    repository.mkdir()
+    repository = tmp_path / "cache" / "owner" / "repo"
+    repository.mkdir(parents=True)
     (repository / "auth.py").write_text(
         "def authenticate_user(token):\n    return token is not None\n"
     )
     monkeypatch.setenv("GITCONTEXT_DATABASE", str(tmp_path / "index.sqlite"))
     monkeypatch.setenv("GITCONTEXT_INGEST_GITHUB", "false")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("gitcontext.web._cache_root", lambda: tmp_path / "cache")
     remote = RemoteRepository(
         "owner/repo", "https://github.com/owner/repo", "main", "abc123", repository
     )
@@ -73,6 +74,23 @@ def test_fastapi_ui_and_repository_api_end_to_end(tmp_path: Path, monkeypatch) -
             )
             assert indexed.status_code == 200
             assert indexed.json()["chunks"] > 0
+            progress = await client.get(
+                "/api/index/progress",
+                params={"repo": "https://github.com/owner/repo"},
+            )
+            assert progress.status_code == 200
+            assert progress.json()["status"] == "complete"
+            source = await client.get(
+                "/api/file",
+                params={"repo": "https://github.com/owner/repo", "path": "auth.py"},
+            )
+            assert source.status_code == 200
+            assert "authenticate_user" in source.json()["content"]
+            traversal = await client.get(
+                "/api/file",
+                params={"repo": "https://github.com/owner/repo", "path": "../repo/auth.py"},
+            )
+            assert traversal.status_code == 400
             answer = await client.post("/api/ask", json={
                 "path": "https://github.com/owner/repo",
                 "question": "How authenticate user?",

@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import threading
 import time
 from collections import defaultdict, deque
 from pathlib import Path
@@ -35,6 +36,8 @@ WEB_ROOT = Path(__file__).with_name("static")
 PUBLIC_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _REPOSITORY_LOCKS: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 _RATE_EVENTS: defaultdict[tuple[str, str], deque[float]] = defaultdict(deque)
+_INDEX_PROGRESS: dict[str, dict[str, Any]] = {}
+_INDEX_PROGRESS_LOCK = threading.Lock()
 
 
 def _repository_lock_key(repository_url: str) -> str:
@@ -75,6 +78,24 @@ ASK_RATE_LIMIT = Depends(_rate_limit_dependency("ask", 15, 60))
 DIAGRAM_RATE_LIMIT = Depends(_rate_limit_dependency("diagram", 15, 60))
 SCAN_RATE_LIMIT = Depends(_rate_limit_dependency("scan", 15, 60))
 INDEX_RATE_LIMIT = Depends(_rate_limit_dependency("index", 5, 300))
+FILE_RATE_LIMIT = Depends(_rate_limit_dependency("file", 60, 60))
+
+
+def _update_index_progress(repository_url: str, **fields: Any) -> None:
+    key = _repository_lock_key(repository_url)
+    with _INDEX_PROGRESS_LOCK:
+        progress = _INDEX_PROGRESS.setdefault(key, {})
+        progress.update(fields)
+        progress["updated_at"] = time.time()
+
+
+def _index_progress(repository_url: str) -> dict[str, Any]:
+    key = _repository_lock_key(repository_url)
+    with _INDEX_PROGRESS_LOCK:
+        return dict(_INDEX_PROGRESS.get(key, {
+            "status": "idle", "stage": "Waiting to index", "processed": 0,
+            "total": 0, "current_file": "",
+        }))
 
 
 def _diagram_for_repository(repository_url: str) -> dict[str, Any]:
@@ -114,6 +135,38 @@ def _diagram_for_repository(repository_url: str) -> dict[str, Any]:
         repository, repository_url, commit_sha, paths, contents,
         indexed_readme(chunks), store, settings, stored_hashes=hashes,
     )
+
+
+def _read_indexed_file(repository_url: str, path: str) -> dict[str, str]:
+    normalized = path.replace("\\", "/")
+    relative_path = Path(normalized)
+    if relative_path.is_absolute() or ".." in relative_path.parts or not normalized.strip():
+        raise HTTPException(status_code=400, detail="Choose a file inside the indexed repository.")
+    owner, name = repository_url.removeprefix("https://github.com/").split("/")
+    repository = (_cache_root() / owner / name).resolve()
+    source = (repository / relative_path).resolve()
+    try:
+        source.relative_to(repository)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400, detail="Choose a file inside the indexed repository."
+        ) from error
+    settings = Settings.for_repository(repository)
+    if not settings.database_path.is_file():
+        raise HTTPException(status_code=409, detail="Build the repository index before opening files.")
+    store = VectorStore(settings.database_path)
+    relative_name = relative_path.as_posix()
+    if store.value("remote_url") != repository_url or relative_name not in store.file_hashes():
+        raise HTTPException(
+            status_code=404, detail="This file is not part of the current repository index."
+        )
+    try:
+        content = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise HTTPException(status_code=404, detail="Could not read this repository file.") from error
+    if len(content.encode("utf-8")) > 1_000_000:
+        raise HTTPException(status_code=413, detail="This file is too large to open in the side panel.")
+    return {"path": relative_name, "content": content}
 
 
 class RepositoryRequest(BaseModel):
@@ -237,20 +290,47 @@ def create_app() -> FastAPI:
     async def index(request: RepositoryRequest) -> dict[str, Any]:
         repository_url = _public_github_url(request.path)
         lock = await _acquire_repository_lock(repository_url)
+        _update_index_progress(
+            repository_url, status="running", stage="Preparing repository index",
+            processed=0, total=0, current_file="", error="",
+        )
+
+        def report_progress(stage: str, processed: int, total: int, current_file: str) -> None:
+            _update_index_progress(
+                repository_url, status="running", stage=stage, processed=processed,
+                total=total, current_file=current_file, error="",
+            )
+
         try:
             summary = await asyncio.to_thread(
-                index_remote_repository, repository_url, public_only=True
+                index_remote_repository, repository_url, public_only=True,
+                progress_callback=report_progress,
             )
         except ValueError as error:
+            _update_index_progress(
+                repository_url, status="error", stage="Indexing stopped", error=str(error)
+            )
             raise HTTPException(status_code=400, detail=str(error)) from error
         except GitHubAPIError as error:
+            _update_index_progress(
+                repository_url, status="error", stage="GitHub request failed",
+                error="GitHub could not complete the repository request.",
+            )
             raise HTTPException(
                 status_code=502, detail="GitHub could not complete the repository request."
             ) from error
         except (OSError, RuntimeError) as error:
+            _update_index_progress(
+                repository_url, status="error", stage="Indexing failed",
+                error="Could not build the repository index.",
+            )
             raise HTTPException(status_code=500, detail="Could not build the repository index.") from error
         finally:
             lock.release()
+        _update_index_progress(
+            repository_url, status="complete", stage="Index complete",
+            processed=summary.source_files, total=summary.source_files, current_file="", error="",
+        )
         return {
             "repository": str(summary.repository),
             "source_files": summary.source_files,
@@ -265,6 +345,11 @@ def create_app() -> FastAPI:
             "incidents": summary.incidents,
             "warnings": summary.warnings,
         }
+
+    @app.get("/api/index/progress", tags=["repository"])
+    async def index_progress(repo: str) -> dict[str, Any]:
+        repository_url = _public_github_url(repo)
+        return _index_progress(repository_url)
 
     @app.post("/api/ask", tags=["retrieval"], dependencies=[ASK_RATE_LIMIT])
     async def ask(request: QuestionRequest) -> dict[str, Any]:
@@ -342,6 +427,15 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status_code=500, detail="Could not generate the repository diagram."
             ) from error
+        finally:
+            lock.release()
+
+    @app.get("/api/file", tags=["repository"], dependencies=[FILE_RATE_LIMIT])
+    async def repository_file(repo: str, path: str) -> dict[str, str]:
+        repository_url = _public_github_url(repo)
+        lock = await _acquire_repository_lock(repository_url)
+        try:
+            return await asyncio.to_thread(_read_indexed_file, repository_url, path)
         finally:
             lock.release()
 
